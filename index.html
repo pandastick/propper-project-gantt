@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PPGantt</title>
+
+  <!-- Vendored Frappe Gantt v0.6.1 (MIT) -->
+  <link rel="stylesheet" href="css/frappe-gantt.css">
+
+  <!-- PPGantt custom styles: phase colors, glows, milestone, slack tails, dark theme -->
+  <link rel="stylesheet" href="css/gantt-custom.css">
+
+  <!-- PPGantt overlay mode styles (Phase C — sidebar, layer stacking) -->
+  <link rel="stylesheet" href="css/overlay.css">
+
+  <!-- Overlay anchor task: synthetic tasks injected for date-range alignment — must be invisible -->
+  <style>
+    /* Hide the anchor bar and its label entirely */
+    .bar-wrapper[data-id="__overlay_anchor_start__"],
+    .bar-wrapper[data-id="__overlay_anchor_end__"] {
+      display: none;
+    }
+    /* Also hide any row label Frappe Gantt generates for anchor tasks */
+    .bar-label[data-id="__overlay_anchor_start__"],
+    .bar-label[data-id="__overlay_anchor_end__"] {
+      display: none;
+    }
+  </style>
+
+  <!-- Integration styles (main session owns these; module CSS lives in gantt-custom.css) -->
+  <style>
+    #sim-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      padding-left: 16px;
+    }
+    #sim-controls button {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      padding: 6px 12px;
+      font-size: 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    #sim-controls button:hover {
+      background: #334155;
+      border-color: #475569;
+    }
+    #reset-sim-btn { color: #fca5a5; }
+    #undo-sim-btn { color: #fde68a; }
+    #export-changes-btn { color: #86efac; }
+    #sim-status {
+      font-size: 11px;
+      font-weight: 500;
+      margin-left: 4px;
+      min-width: 110px;
+    }
+    #ppgantt-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    #focus-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    #focus-controls label {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    #focus-controls select,
+    #focus-controls button {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      padding: 6px 10px;
+      font-size: 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    #focus-controls select:disabled,
+    #focus-controls button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    #focus-controls button:hover,
+    #focus-controls select:hover {
+      background: #334155;
+      border-color: #475569;
+    }
+    #focus-summary {
+      font-size: 11px;
+      color: #94a3b8;
+      min-width: 130px;
+    }
+    #export-fallback-dialog {
+      width: min(860px, calc(100vw - 32px));
+      max-height: calc(100vh - 32px);
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 0;
+    }
+    #export-fallback-dialog::backdrop {
+      background: rgba(15, 23, 42, 0.72);
+    }
+    #export-fallback-dialog .dialog-body {
+      padding: 16px;
+    }
+    #export-fallback-dialog h2 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+    #export-fallback-dialog p {
+      margin: 0 0 12px;
+      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    #export-fallback-output {
+      width: 100%;
+      min-height: 360px;
+      resize: vertical;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      background: #020617;
+      color: #e2e8f0;
+      padding: 12px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      box-sizing: border-box;
+    }
+    #export-fallback-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    #export-fallback-actions button {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      padding: 8px 12px;
+      font-size: 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #export-fallback-actions button:hover {
+      background: #334155;
+    }
+    #export-fallback-status {
+      margin-right: auto;
+      align-self: center;
+      color: #94a3b8;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ─── Overlay Sidebar (Phase C) ──────────────────────────────────────── -->
+  <!--
+    The sidebar is hidden by default (display:none via overlay.css).
+    loader.js shows it only when the manifest contains at least 1 file.
+    If only _fixture.json exists, the sidebar lists it but overlay mode
+    is only activated when ≥2 files are checked simultaneously.
+  -->
+  <aside id="ppgantt-sidebar">
+    <h3>Files</h3>
+    <div id="file-list">
+      <div id="file-list-message">Loading…</div>
+    </div>
+  </aside>
+
+  <!-- ─── Header ─────────────────────────────────────────────────────────── -->
+  <div id="ppgantt-header">
+    <h1>PPGantt</h1>
+
+    <!-- Zoom level selector -->
+    <div id="zoom-controls">
+      <label>Zoom:</label>
+      <button class="zoom-btn active" data-mode="Day">Day</button>
+      <button class="zoom-btn" data-mode="Week">Week</button>
+      <button class="zoom-btn" data-mode="Month">Month</button>
+      <button class="zoom-btn" data-mode="Quarter Day">Quarter</button>
+      <button class="zoom-btn" id="month-layout-btn" type="button" title="Reorder rows visually to keep related work and dependency chains closer together">Simplify</button>
+    </div>
+
+    <div id="focus-controls">
+      <label for="focus-field">Focus:</label>
+      <select id="focus-field">
+        <option value="">Everything</option>
+        <option value="phase">Phase</option>
+        <option value="stream">Stream</option>
+        <option value="owner">Owner</option>
+        <option value="risk_level">Risk</option>
+        <option value="is_milestone">Milestone only</option>
+        <option value="critical_path">Critical path only</option>
+      </select>
+      <select id="focus-value" disabled>
+        <option value="">All values</option>
+      </select>
+      <button id="clear-focus-btn" type="button" disabled>Clear focus</button>
+      <span id="focus-summary"></span>
+    </div>
+
+    <span class="subtitle" id="data-source-label"></span>
+
+    <!-- Simulation controls (Wave 1 integration) -->
+    <div id="sim-controls">
+      <button id="undo-sim-btn" type="button" title="Undo the most recent simulation change" disabled>Undo</button>
+      <button id="reset-sim-btn" type="button" title="Clear any active simulation and re-render original data">Reset simulation</button>
+      <button id="export-changes-btn" type="button" title="Copy a Notion-MCP-ready markdown prompt to the clipboard">Export changes</button>
+      <span id="sim-status"></span>
+    </div>
+  </div>
+
+  <!-- ─── Error banner (hidden by default) ────────────────────────────────── -->
+  <div id="error-banner" role="alert"></div>
+
+  <!-- ─── Main chart area ─────────────────────────────────────────────────── -->
+  <div id="gantt-wrapper">
+    <div id="loading-banner">Loading fixture data...</div>
+    <div id="gantt-container"></div>
+  </div>
+
+  <dialog id="export-fallback-dialog">
+    <div class="dialog-body">
+      <h2>Export Changes</h2>
+      <p id="export-fallback-message">Clipboard copy failed. Copy the markdown below manually.</p>
+      <textarea id="export-fallback-output" spellcheck="false" readonly></textarea>
+      <div id="export-fallback-actions">
+        <span id="export-fallback-status"></span>
+        <button id="export-fallback-copy-btn" type="button">Copy again</button>
+        <button id="export-fallback-close-btn" type="button">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- ─── Phase legend ────────────────────────────────────────────────────── -->
+  <div id="legend">
+    <span style="color: #64748b; font-size: 11px; margin-right: 6px;">Phases:</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#E03E3E;"></span>Phase 0.5 Security</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#F59E0B;"></span>Phase 1 Foundation</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#3B82F6;"></span>Phase 2A User Features</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#8B5CF6;"></span>Phase 2B Infrastructure</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#EC4899;"></span>Phase 2C White-Label</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#10B981;"></span>Phase 3 Integration</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#EAB308;"></span>App Store Track</span>
+    <span style="margin-left: 20px; color: #64748b;">Styles:</span>
+    <span class="legend-item"><span style="display:inline-block;width:20px;height:3px;background:#000;border-radius:2px;margin-right:4px;"></span>Critical path</span>
+    <span class="legend-item"><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#555;box-shadow:0 0 5px #f97316;margin-right:4px;"></span>Risk glow</span>
+    <span class="legend-item"><span style="display:inline-block;width:12px;height:12px;transform:rotate(45deg);background:#8B5CF6;margin-right:8px;"></span>Milestone checkpoint</span>
+    <span class="legend-item"><span style="display:inline-block;width:20px;border-bottom:2px dashed #94a3b8;margin-right:6px;"></span>Slack tail</span>
+    <span class="legend-item" style="color:#94a3b8;">Diagonal diamond = milestone/checkpoint, not a note</span>
+  </div>
+
+  <!-- ─── Scripts ─────────────────────────────────────────────────────────── -->
+
+  <!-- Vendored Frappe Gantt v0.6.1 (MIT) — exposes window.Gantt -->
+  <script src="js/frappe-gantt.min.js"></script>
+
+  <!-- PPGantt viewer — exposes window.renderGantt, window.ppGanttSetViewMode -->
+  <script src="js/viewer.js"></script>
+
+  <!-- PPGantt simulator (Phase D) — exposes window.PPGanttSimulator -->
+  <script src="js/simulator.js"></script>
+
+  <!-- PPGantt change log (Phase E) — exposes window.PPGanttChangeLog -->
+  <script src="js/change-log.js"></script>
+
+  <!-- Phase C modules: loader + overlay -->
+  <script src="js/loader.js"></script>
+  <script src="js/overlay.js"></script>
+
+  <!-- Bootstrap script: fetch fixture, render chart, wire integration -->
+  <script>
+    (function () {
+      'use strict';
+
+      var DEFAULT_FILENAME = '_fixture.json';
+      var _focusFilter = { field: '', value: '' };
+
+      // ─── Shared state for integration (simulator + change log) ──────────
+      var _originalJson = null;   // Full JSON payload as loaded from disk
+      var _changeLog = null;      // PPGanttChangeLog instance, created after load
+      var _lastSimulationContext = null;
+      var _taskById = {};         // Quick lookup: task.id → task object
+      var _activeSchedule = null; // Currently active schedule (original or simulated)
+      var _activePushAmounts = null; // Current simulation push amounts
+      var _preferredViewMode = 'Day';
+      var _simulationHistory = [];
+
+      // ─── UI helpers ───────────────────────────────────────────────────────
+
+      function showError(msg) {
+        var banner = document.getElementById('error-banner');
+        banner.textContent = msg;
+        banner.style.display = 'block';
+        document.getElementById('loading-banner').style.display = 'none';
+      }
+
+      function hideLoading() {
+        document.getElementById('loading-banner').style.display = 'none';
+      }
+
+      function setSourceLabel(json) {
+        var label = document.getElementById('data-source-label');
+        if (json && json.source) {
+          var synced = json.source.synced_at
+            ? ' - synced ' + json.source.synced_at.slice(0, 10)
+            : '';
+          label.textContent = (json.source.table_name || 'Fixture') + synced;
+        }
+      }
+
+      function _syncAppApi() {
+        window.PPGanttApp = Object.assign({}, window.PPGanttApp || {}, {
+          handleTaskClick: function (task) {
+            _handleTaskClick(task);
+          },
+          renderFromJson: function (json) {
+            renderFromJson(json);
+          },
+          resetSimulation: function () {
+            _resetSimulation();
+          },
+          hasChanges: function () {
+            return !!(_changeLog && _changeLog.hasChanges());
+          },
+          exportMarkdown: function () {
+            return _changeLog ? _changeLog.exportMarkdown() : '';
+          }
+        });
+      }
+
+      function _showExportFallback(md, reason) {
+        var dialog = document.getElementById('export-fallback-dialog');
+        var textarea = document.getElementById('export-fallback-output');
+        var message = document.getElementById('export-fallback-message');
+        var status = document.getElementById('export-fallback-status');
+        if (!dialog || !textarea || !message) {
+          alert('Clipboard copy failed. Open DevTools to recover the markdown from the console.');
+          console.log('[PPGantt] Change log markdown:\n' + md);
+          return;
+        }
+
+        textarea.value = md;
+        message.textContent = reason || 'Clipboard copy failed. Copy the markdown below manually.';
+        if (status) status.textContent = '';
+
+        if (typeof dialog.showModal === 'function') {
+          dialog.showModal();
+        } else {
+          dialog.setAttribute('open', 'open');
+        }
+
+        textarea.focus();
+        textarea.select();
+      }
+
+      function _cloneSchedule(tasks) {
+        return JSON.parse(JSON.stringify(tasks || []));
+      }
+
+      function _clonePushAmounts(pushAmounts) {
+        if (!pushAmounts) return null;
+        if (pushAmounts instanceof Map) {
+          return new Map(pushAmounts);
+        }
+        return new Map(Object.entries(pushAmounts));
+      }
+
+      function _syncUndoButton() {
+        var undoBtn = document.getElementById('undo-sim-btn');
+        if (!undoBtn) return;
+        undoBtn.disabled = _simulationHistory.length === 0;
+      }
+
+      function _syncChangeLogFromSchedule() {
+        if (!_changeLog || !_originalJson || !_activeSchedule || !window.PPGanttChangeLog ||
+            typeof window.PPGanttChangeLog.buildScheduleDiffEvents !== 'function') {
+          return;
+        }
+
+        var context = _lastSimulationContext || {};
+        var diffEvents = window.PPGanttChangeLog.buildScheduleDiffEvents(
+          _originalJson.tasks,
+          _activeSchedule,
+          context
+        );
+        _changeLog.replaceEvents(diffEvents);
+      }
+
+      function _getTaskMetaValue(task, field) {
+        if (!task) return '';
+        if (field === 'is_milestone') return task.meta && task.meta.is_milestone ? 'Milestone' : '';
+        if (field === 'critical_path') return task.meta && task.meta.critical_path ? 'Critical path' : '';
+        return (task.meta && task.meta[field]) || '';
+      }
+
+      function _getFocusOptions(field) {
+        if (!_originalJson || !_originalJson.tasks || !field) return [];
+        if (field === 'is_milestone') return [{ value: 'Milestone', label: 'Milestones' }];
+        if (field === 'critical_path') return [{ value: 'Critical path', label: 'Critical path' }];
+
+        return _originalJson.tasks
+          .map(function (task) { return _getTaskMetaValue(task, field); })
+          .filter(function (value) { return !!value; })
+          .filter(function (value, index, arr) { return arr.indexOf(value) === index; })
+          .sort()
+          .map(function (value) { return { value: value, label: value }; });
+      }
+
+      function _syncFocusValueOptions() {
+        var valueSelect = document.getElementById('focus-value');
+        var clearBtn = document.getElementById('clear-focus-btn');
+        var options = _getFocusOptions(_focusFilter.field);
+        if (!valueSelect) return;
+
+        valueSelect.innerHTML = '';
+        var base = document.createElement('option');
+        base.value = '';
+        base.textContent = _focusFilter.field ? 'All values' : 'All values';
+        valueSelect.appendChild(base);
+
+        options.forEach(function (option) {
+          var el = document.createElement('option');
+          el.value = option.value;
+          el.textContent = option.label;
+          valueSelect.appendChild(el);
+        });
+
+        if (_focusFilter.value && options.some(function (option) { return option.value === _focusFilter.value; })) {
+          valueSelect.value = _focusFilter.value;
+        } else {
+          _focusFilter.value = '';
+          valueSelect.value = '';
+        }
+
+        valueSelect.disabled = !_focusFilter.field || options.length === 0;
+        if (clearBtn) clearBtn.disabled = !_focusFilter.field && !_focusFilter.value;
+      }
+
+      function _filterTasks(tasks) {
+        if (!_focusFilter.field || !_focusFilter.value) return tasks;
+        return (tasks || []).filter(function (task) {
+          return _getTaskMetaValue(task, _focusFilter.field) === _focusFilter.value;
+        });
+      }
+
+      function _updateFocusSummary(visibleCount, totalCount) {
+        var summary = document.getElementById('focus-summary');
+        var clearBtn = document.getElementById('clear-focus-btn');
+        if (summary) {
+          if (_focusFilter.field && _focusFilter.value) {
+            summary.textContent = visibleCount + ' of ' + totalCount + ' tasks';
+          } else {
+            summary.textContent = totalCount ? totalCount + ' tasks' : '';
+          }
+        }
+        if (clearBtn) clearBtn.disabled = !_focusFilter.field && !_focusFilter.value;
+      }
+
+      function _renderActiveSchedule() {
+        if (!_originalJson) return;
+
+        var schedule = _activeSchedule || _originalJson.tasks;
+        var filteredSchedule = _filterTasks(schedule);
+        var filteredOriginal = _filterTasks(_originalJson.tasks);
+        var container = document.getElementById('gantt-container');
+
+        if (!filteredSchedule.length) {
+          container.innerHTML = '<div id="loading-banner">No tasks match the current focus filter.</div>';
+          _updateFocusSummary(0, schedule.length);
+          return;
+        }
+
+        renderGantt(container, filteredSchedule, _originalJson.phase_palette, {
+          view_mode: _preferredViewMode,
+          on_click: function (task) { _handleTaskClick(task); }
+        });
+
+        if (_activePushAmounts && window.PPGanttSimulator) {
+          try {
+            window.PPGanttSimulator.renderGhosts(
+              container,
+              filteredOriginal,
+              filteredSchedule,
+              _activePushAmounts
+            );
+          } catch (e) {
+            console.warn('[PPGantt] Ghost rendering failed:', e);
+          }
+        }
+
+        _updateFocusSummary(filteredSchedule.length, schedule.length);
+      }
+
+      function _resolveInitialFilename() {
+        if (!window.PPGanttLoader || !window.PPGanttLoader.loadManifest) {
+          return Promise.resolve(DEFAULT_FILENAME);
+        }
+        return window.PPGanttLoader.loadManifest()
+          .then(function (manifest) {
+            var files = (manifest && manifest.files) || [];
+            var preferred = files.find(function (entry) {
+              return entry && entry.filename && !entry.is_fixture;
+            });
+            return preferred && preferred.filename ? preferred.filename : DEFAULT_FILENAME;
+          })
+          .catch(function () {
+            return DEFAULT_FILENAME;
+          });
+      }
+
+      function _loadInitialData() {
+        return _resolveInitialFilename().then(function (filename) {
+          if (window.PPGanttLoader && window.PPGanttLoader.loadFile) {
+            return window.PPGanttLoader.loadFile(filename).then(function (json) {
+              return { filename: filename, json: json };
+            });
+          }
+          throw new Error('PPGanttLoader is unavailable.');
+        });
+      }
+
+      // ─── Render from parsed JSON ──────────────────────────────────────────
+
+      function renderFromJson(json) {
+        if (!json.tasks || !Array.isArray(json.tasks) || json.tasks.length === 0) {
+          throw new Error('No tasks found in data file');
+        }
+        hideLoading();
+        setSourceLabel(json);
+
+        // Cache for integration hooks
+        _originalJson = json;
+        _activeSchedule = json.tasks;
+        _activePushAmounts = null;
+        _lastSimulationContext = null;
+        _simulationHistory = [];
+        _taskById = {};
+        json.tasks.forEach(function (t) { _taskById[t.id] = t; });
+        _syncFocusValueOptions();
+
+        // Create change log bound to this source
+        if (window.PPGanttChangeLog) {
+          _changeLog = window.PPGanttChangeLog.createFromSource(json.source || {});
+          _syncChangeLogFromSchedule();
+        }
+        _renderActiveSchedule();
+
+        // Restore any in-progress simulation from sessionStorage
+        _restoreSimulationIfAny();
+        _updateSimStatus();
+        _syncUndoButton();
+        _syncAppApi();
+      }
+
+      // ─── Simulation integration ──────────────────────────────────────────
+
+      function _handleTaskClick(task) {
+        if (!window.PPGanttSimulator) return;
+        window.PPGanttSimulator.openPushDialog(task.id, function (pushDays) {
+          _applyPush(task.id, pushDays);
+        });
+      }
+
+      function _applyPush(rootTaskId, pushDays) {
+        if (!_originalJson || !window.PPGanttSimulator) return;
+        try {
+          var currentRootName = (_taskById[rootTaskId] && _taskById[rootTaskId].name) || rootTaskId;
+          _simulationHistory.push({
+            schedule: _cloneSchedule(_activeSchedule || _originalJson.tasks),
+            pushAmounts: _clonePushAmounts(_activePushAmounts),
+            context: _lastSimulationContext ? {
+              rootTaskId: _lastSimulationContext.rootTaskId || '',
+              rootTaskName: _lastSimulationContext.rootTaskName || '',
+              pushAmounts: _clonePushAmounts(_lastSimulationContext.pushAmounts)
+            } : null
+          });
+
+          var result = window.PPGanttSimulator.simulatePush(
+            _originalJson.tasks,
+            rootTaskId,
+            pushDays
+          );
+          var newSchedule = result.newSchedule;
+          var pushAmounts = result.pushAmounts; // Map
+
+          // Record events in the change log
+          if (_changeLog) {
+            var rootTask = _taskById[rootTaskId];
+            var origRoot = rootTask;
+            var newRoot = newSchedule.find(function (t) { return t.id === rootTaskId; });
+            if (origRoot && newRoot) {
+              _changeLog.recordPush(
+                origRoot.id,
+                origRoot.name,
+                (origRoot.meta && origRoot.meta.notion_url) || '',
+                origRoot.start, origRoot.end,
+                newRoot.start, newRoot.end,
+                'user push'
+              );
+            }
+
+            // Walk pushAmounts for cascades (skip root)
+            pushAmounts.forEach(function (amount, taskId) {
+              if (taskId === rootTaskId) return;
+              var origTask = _taskById[taskId];
+              var newTask = newSchedule.find(function (t) { return t.id === taskId; });
+              if (origTask && newTask) {
+                _changeLog.recordPush(
+                  origTask.id,
+                  origTask.name,
+                  (origTask.meta && origTask.meta.notion_url) || '',
+                  origTask.start, origTask.end,
+                  newTask.start, newTask.end,
+                  'cascade from task ' + (origRoot ? origRoot.name : rootTaskId)
+                );
+              }
+            });
+          }
+
+          // Persist simulation state
+          window.PPGanttSimulator.saveSimulation({
+            pushedTaskId: rootTaskId,
+            pushDays: pushDays,
+            newSchedule: newSchedule,
+            pushAmounts: pushAmounts,
+            synced_at: _originalJson.source && _originalJson.source.synced_at,
+            timestamp: new Date().toISOString()
+          });
+
+          _activeSchedule = newSchedule;
+          _activePushAmounts = pushAmounts;
+          _lastSimulationContext = {
+            rootTaskId: rootTaskId,
+            rootTaskName: origRoot ? origRoot.name : currentRootName,
+            pushAmounts: pushAmounts
+          };
+          _syncChangeLogFromSchedule();
+          _renderActiveSchedule();
+
+          _updateSimStatus();
+          _syncUndoButton();
+        } catch (err) {
+          _simulationHistory.pop();
+          showError('Simulation failed: ' + (err.message || String(err)));
+          console.error('[PPGantt] simulation error', err);
+        }
+      }
+
+      function _restoreSimulationIfAny() {
+        if (!window.PPGanttSimulator || !_originalJson) return;
+        var synced_at = _originalJson.source && _originalJson.source.synced_at;
+        var state = window.PPGanttSimulator.loadSimulation(synced_at);
+        if (!state) return;
+        _activeSchedule = state.newSchedule;
+        _activePushAmounts = state.pushAmounts;
+        _lastSimulationContext = {
+          rootTaskId: state.pushedTaskId || '',
+          rootTaskName: (_taskById[state.pushedTaskId] && _taskById[state.pushedTaskId].name) || state.pushedTaskId || '',
+          pushAmounts: state.pushAmounts || null
+        };
+        _syncChangeLogFromSchedule();
+        _renderActiveSchedule();
+        _syncUndoButton();
+      }
+
+      function _resetSimulation() {
+        if (window.PPGanttSimulator) {
+          window.PPGanttSimulator.resetSimulation();
+        }
+        if (_changeLog) {
+          _changeLog.clear();
+        }
+        if (_originalJson) {
+          _activeSchedule = _originalJson.tasks;
+          _activePushAmounts = null;
+          _lastSimulationContext = null;
+          _simulationHistory = [];
+          _renderActiveSchedule();
+        }
+        _updateSimStatus();
+        _syncUndoButton();
+      }
+
+      function _undoSimulation() {
+        if (_simulationHistory.length === 0 || !_originalJson) return;
+
+        var previous = _simulationHistory.pop();
+        _activeSchedule = previous && previous.schedule ? previous.schedule : _originalJson.tasks;
+        _activePushAmounts = previous ? previous.pushAmounts : null;
+        _lastSimulationContext = previous ? previous.context : null;
+
+        var hasActiveSimulation = JSON.stringify(_activeSchedule) !== JSON.stringify(_originalJson.tasks);
+        if (window.PPGanttSimulator) {
+          if (hasActiveSimulation) {
+            window.PPGanttSimulator.saveSimulation({
+              pushedTaskId: _lastSimulationContext && _lastSimulationContext.rootTaskId,
+              pushDays: 0,
+              newSchedule: _activeSchedule,
+              pushAmounts: _activePushAmounts,
+              synced_at: _originalJson.source && _originalJson.source.synced_at,
+              timestamp: new Date().toISOString()
+            });
+          } else {
+            window.PPGanttSimulator.resetSimulation();
+          }
+        }
+
+        _syncChangeLogFromSchedule();
+        _renderActiveSchedule();
+        _updateSimStatus();
+        _syncUndoButton();
+      }
+
+      function _updateSimStatus() {
+        var statusEl = document.getElementById('sim-status');
+        if (!statusEl) return;
+        _syncChangeLogFromSchedule();
+        if (_changeLog && _changeLog.hasChanges()) {
+          statusEl.textContent = 'Simulation active';
+          statusEl.style.color = '#f97316';
+        } else {
+          statusEl.textContent = '';
+        }
+      }
+
+      async function _exportChanges() {
+        _syncChangeLogFromSchedule();
+        if (!_changeLog || !_changeLog.hasChanges()) {
+          alert('No simulation changes to export. Click a task to push it first.');
+          return;
+        }
+        var md = _changeLog.exportMarkdown();
+        try {
+          await _changeLog.copyToClipboard();
+          _showExportFallback(md, 'Change log copied to clipboard. Review it below or copy again manually.');
+        } catch (err) {
+          _showExportFallback(md, 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+        }
+      }
+
+      // ─── Zoom button wiring ───────────────────────────────────────────────
+
+      document.querySelectorAll('.zoom-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (!btn.dataset.mode) return;
+          var mode = btn.dataset.mode;
+          _preferredViewMode = mode;
+          if (typeof ppGanttSetViewMode === 'function') {
+            ppGanttSetViewMode(mode);
+          }
+          // Active class is synced via on_view_change callback in viewer.js
+        });
+      });
+
+      // ─── Simulation button wiring ────────────────────────────────────────
+
+      document.addEventListener('DOMContentLoaded', function () {
+        var undoBtn = document.getElementById('undo-sim-btn');
+        var resetBtn = document.getElementById('reset-sim-btn');
+        var exportBtn = document.getElementById('export-changes-btn');
+        var exportDialog = document.getElementById('export-fallback-dialog');
+        var exportCopyBtn = document.getElementById('export-fallback-copy-btn');
+        var exportCloseBtn = document.getElementById('export-fallback-close-btn');
+        var exportOutput = document.getElementById('export-fallback-output');
+        var exportStatus = document.getElementById('export-fallback-status');
+        var monthLayoutBtn = document.getElementById('month-layout-btn');
+        var focusField = document.getElementById('focus-field');
+        var focusValue = document.getElementById('focus-value');
+        var clearFocusBtn = document.getElementById('clear-focus-btn');
+        if (undoBtn) undoBtn.addEventListener('click', _undoSimulation);
+        if (resetBtn) resetBtn.addEventListener('click', _resetSimulation);
+        if (exportBtn) exportBtn.addEventListener('click', _exportChanges);
+        if (monthLayoutBtn) {
+          monthLayoutBtn.addEventListener('click', function () {
+            if (monthLayoutBtn.disabled) return;
+            var compact = !(window._ppGanttInternal && window._ppGanttInternal.isMonthLayoutCompact && window._ppGanttInternal.isMonthLayoutCompact());
+            if (typeof window.ppGanttSetMonthLayoutCompact === 'function') {
+              window.ppGanttSetMonthLayoutCompact(compact);
+            }
+          });
+        }
+        if (focusField) {
+          focusField.addEventListener('change', function () {
+            _focusFilter.field = focusField.value || '';
+            _focusFilter.value = '';
+            _syncFocusValueOptions();
+            _renderActiveSchedule();
+          });
+        }
+        if (focusValue) {
+          focusValue.addEventListener('change', function () {
+            _focusFilter.value = focusValue.value || '';
+            _renderActiveSchedule();
+          });
+        }
+        if (clearFocusBtn && focusField && focusValue) {
+          clearFocusBtn.addEventListener('click', function () {
+            _focusFilter.field = '';
+            _focusFilter.value = '';
+            focusField.value = '';
+            _syncFocusValueOptions();
+            _renderActiveSchedule();
+          });
+        }
+        if (exportCloseBtn && exportDialog) {
+          exportCloseBtn.addEventListener('click', function () {
+            exportDialog.close();
+          });
+        }
+        if (exportCopyBtn && exportOutput) {
+          exportCopyBtn.addEventListener('click', async function () {
+            exportOutput.focus();
+            exportOutput.select();
+            try {
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(exportOutput.value);
+                if (exportStatus) exportStatus.textContent = 'Copied.';
+              } else if (document.execCommand && document.execCommand('copy')) {
+                if (exportStatus) exportStatus.textContent = 'Copied.';
+              } else if (exportStatus) {
+                exportStatus.textContent = 'Select the text and copy manually.';
+              }
+            } catch (err) {
+              if (exportStatus) {
+                exportStatus.textContent = 'Copy failed. Select the text and copy manually.';
+              }
+            }
+          });
+        }
+        _syncUndoButton();
+        _syncAppApi();
+      });
+
+      // ─── Data loading strategy ────────────────────────────────────────────
+      //
+      // Safari blocks fetch() from file:// URLs (CORS security restriction).
+      // We use a two-path approach:
+      //
+      //   Path 1 (http:// or https://): standard fetch() — works everywhere.
+      //   Path 2 (file://): XMLHttpRequest synchronous — Safari allows XHR
+      //                     from file:// for same-origin local files.
+      //
+      // If both fail, we show a helpful error with server instructions.
+
+      document.addEventListener('DOMContentLoaded', function () {
+        _loadInitialData()
+          .then(function (result) {
+            renderFromJson(result.json);
+          })
+          .catch(function (err) {
+            if (window.location.protocol === 'file:') {
+              _resolveInitialFilename().then(function (filename) {
+                _tryScriptInjection(filename);
+              });
+              return;
+            }
+            showError('Load failed: ' + (err.message || String(err)));
+            console.error('[PPGantt]', err);
+          });
+      });
+
+      // ─── Fallback: script tag injection (last resort for file://) ─────────
+      // If XHR also fails, dynamically load a data shim.
+      // This requires data/_fixture.js to exist (wraps the JSON as a global).
+      // viewer.js checks for window.__PPGANTT_DATA__ set by the shim.
+      function _tryScriptInjection(filename) {
+        var targetFilename = filename || DEFAULT_FILENAME;
+        var script = document.createElement('script');
+        script.src = 'data/' + targetFilename.replace(/\.json$/, '.js');
+        script.onload = function () {
+          if (window.__PPGANTT_DATA__) {
+            try {
+              renderFromJson(window.__PPGANTT_DATA__);
+            } catch (e) {
+              showError('Render error: ' + e.message);
+            }
+          } else {
+            showError(
+              'Cannot load data from file://. ' +
+              'Run a local server: cd "' + window.location.pathname.replace('/index.html', '') + '" && python3 -m http.server 8080 ' +
+              'then open http://localhost:8080'
+            );
+          }
+        };
+        script.onerror = function () {
+          if (targetFilename !== DEFAULT_FILENAME) {
+            _tryScriptInjection(DEFAULT_FILENAME);
+            return;
+          }
+          showError(
+            'Safari file:// restriction: data cannot be loaded directly. ' +
+            'Run: python3 -m http.server 8080 in the project folder, then open http://localhost:8080'
+          );
+        };
+        document.head.appendChild(script);
+      }
+
+    }());
+  </script>
+
+  <!--
+    ─────────────────────────────────────────────────────────────────────────
+    Phase C — Sidebar wiring & overlay mode controller
+    ─────────────────────────────────────────────────────────────────────────
+
+    This script block is ADDITIVE: it does NOT modify the existing bootstrap
+    IIFE above. Instead it coordinates alongside it using:
+      - window.PPGanttLoader (loader.js)
+      - window.PPGanttOverlay (overlay.js)
+      - window.renderGantt (viewer.js)
+
+    State coordination:
+      - When switching to overlay mode (≥2 files checked):
+          1. Reset any active simulation to avoid ghost-bar confusion
+          2. Call PPGanttOverlay.render() with selected layers
+      - When switching back to single-file mode (==1 file checked):
+          1. Call PPGanttOverlay.clear() to tear down layers
+          2. Re-call renderGantt() on #gantt-container directly
+          3. Restore simulation state if any
+      - If 0 files checked: show an error, do nothing
+  -->
+  <script>
+    (function () {
+      'use strict';
+
+      // ─── State ─────────────────────────────────────────────────────────
+      var _manifestFiles = [];         // All entries from _manifest.json
+      var _checkedFiles = {};          // { filename: true } map
+      var _loadedJsonCache = {};       // { filename: parsedJson } cache
+      var _currentMode = 'single';    // 'single' | 'overlay'
+      var _ganttContainer = null;      // Reference to #gantt-container
+
+      // Default opacity: 1.0 for primary, 0.45 for secondaries (per plan §5.2)
+      var DEFAULT_PRIMARY_OPACITY = 1.0;
+      var DEFAULT_SECONDARY_OPACITY = 0.45;
+
+      // ─── Helpers ──────────────────────────────────────────────────────
+
+      function _showSidebar() {
+        var sidebar = document.getElementById('ppgantt-sidebar');
+        if (sidebar) {
+          sidebar.classList.add('visible');
+          document.body.classList.add('overlay-sidebar-open');
+        }
+      }
+
+      function _showError(msg) {
+        var banner = document.getElementById('error-banner');
+        if (banner) {
+          banner.textContent = msg;
+          banner.style.display = 'block';
+        }
+      }
+
+      function _clearError() {
+        var banner = document.getElementById('error-banner');
+        if (banner) {
+          banner.style.display = 'none';
+          banner.textContent = '';
+        }
+      }
+
+      // ─── Load (or return cached) JSON for a filename ────────────────
+
+      function _ensureLoaded(filename) {
+        if (_loadedJsonCache[filename]) {
+          return Promise.resolve(_loadedJsonCache[filename]);
+        }
+        return window.PPGanttLoader.loadFile(filename).then(function (json) {
+          _loadedJsonCache[filename] = json;
+          return json;
+        });
+      }
+
+      // ─── Re-render based on current checked set ─────────────────────
+
+      function _applyCheckedState() {
+        var selected = Object.keys(_checkedFiles).filter(function (f) {
+          return _checkedFiles[f];
+        });
+
+        if (selected.length === 0) {
+          _showError('No files selected. Check at least one file in the sidebar.');
+          return;
+        }
+
+        _clearError();
+
+        if (selected.length === 1) {
+          // ── Single-file mode ─────────────────────────────────────
+          // Reset any active simulation first to avoid stale ghost bars
+          if (_currentMode === 'overlay') {
+            if (window.PPGanttOverlay) window.PPGanttOverlay.clear();
+            if (window.PPGanttApp && window.PPGanttApp.resetSimulation) {
+              window.PPGanttApp.resetSimulation();
+            } else if (window.PPGanttSimulator) {
+              window.PPGanttSimulator.resetSimulation();
+            }
+          }
+          _currentMode = 'single';
+
+          _ensureLoaded(selected[0]).then(function (json) {
+            if (window.PPGanttApp && window.PPGanttApp.renderFromJson) {
+              window.PPGanttApp.renderFromJson(json);
+              return;
+            }
+
+            var container = document.getElementById('gantt-container');
+            if (!container) return;
+            window.renderGantt(container, json.tasks, json.phase_palette, {
+              on_click: function (task) {
+                if (window.PPGanttApp && window.PPGanttApp.handleTaskClick) {
+                  window.PPGanttApp.handleTaskClick(task);
+                }
+              }
+            });
+          }).catch(function (err) {
+            _showError('Failed to load "' + selected[0] + '": ' + err.message);
+          });
+
+        } else {
+          // ── Overlay mode (≥2 files) ──────────────────────────────
+          // Reset active simulation before entering overlay mode
+          if (window.PPGanttApp && window.PPGanttApp.resetSimulation) {
+            window.PPGanttApp.resetSimulation();
+          } else if (window.PPGanttSimulator) {
+            window.PPGanttSimulator.resetSimulation();
+          }
+          _currentMode = 'overlay';
+
+          // Load all selected files in parallel (use cache where available)
+          var uncachedFiles = selected.filter(function (f) { return !_loadedJsonCache[f]; });
+          window.PPGanttLoader.loadFiles(uncachedFiles).then(function (results) {
+            // Populate the cache with freshly-fetched files
+            results.forEach(function (result) {
+              if (!result.error) {
+                _loadedJsonCache[result.filename] = result.json;
+              }
+            });
+
+            var layers = [];
+            var errors = [];
+
+            selected.forEach(function (filename, index) {
+              var json = _loadedJsonCache[filename];
+              if (!json) {
+                // Check if the load failed
+                var failResult = results.find(function (r) { return r.filename === filename; });
+                if (failResult && failResult.error) {
+                  errors.push(filename + ': ' + failResult.error.message);
+                } else {
+                  errors.push(filename + ': unknown load failure');
+                }
+                return;
+              }
+              var isPrimary = (index === 0);
+              layers.push({
+                filename: filename,
+                json: json,
+                opacity: _getSliderOpacity(filename) ||
+                         (isPrimary ? DEFAULT_PRIMARY_OPACITY : DEFAULT_SECONDARY_OPACITY)
+              });
+            });
+
+            if (errors.length > 0) {
+              _showError('Load errors: ' + errors.join('; '));
+            }
+
+            if (layers.length === 0) {
+              _showError('No layers could be loaded. Check the console for details.');
+              return;
+            }
+
+            // The overlay renders into #gantt-container, replacing whatever is there
+            var container = document.getElementById('gantt-container');
+            if (!container) return;
+
+            // Clear it first so renderGantt starts fresh for each layer
+            container.innerHTML = '';
+
+            try {
+              window.PPGanttOverlay.render(container, layers);
+            } catch (err) {
+              _showError('Overlay render failed: ' + err.message);
+              console.error('[PPGanttApp] overlay error', err);
+            }
+          });
+        }
+      }
+
+      // ─── Get current opacity value from a file's slider ────────────
+
+      function _getSliderOpacity(filename) {
+        var card = document.querySelector('.file-card[data-filename="' + CSS.escape(filename) + '"]');
+        if (!card) return null;
+        var slider = card.querySelector('.opacity-slider');
+        if (!slider) return null;
+        return parseFloat(slider.value);
+      }
+
+      // ─── Build sidebar UI ────────────────────────────────────────────
+
+      function _buildSidebar(manifestFiles) {
+        var listEl = document.getElementById('file-list');
+        if (!listEl) return;
+
+        // Clear loading message
+        listEl.innerHTML = '';
+
+        if (manifestFiles.length === 0) {
+          listEl.innerHTML = '<div id="file-list-message">No files found in manifest.</div>';
+          return;
+        }
+
+        manifestFiles.forEach(function (fileEntry, index) {
+          var filename = fileEntry.filename;
+          var isFixture = filename === '_fixture.json';
+
+          // Pre-check the fixture (which is already loaded by the bootstrap IIFE)
+          if (isFixture && !_checkedFiles[filename]) {
+            _checkedFiles[filename] = true;
+          }
+
+          var isPrimaryByDefault = (index === 0);
+          var defaultOpacity = isPrimaryByDefault ? DEFAULT_PRIMARY_OPACITY : DEFAULT_SECONDARY_OPACITY;
+
+          // Build the card
+          var card = document.createElement('div');
+          card.className = 'file-card';
+          card.setAttribute('data-filename', filename);
+
+          var humanName = fileEntry.table_name || filename.replace('.json', '');
+          var rowCount = fileEntry.row_count != null ? fileEntry.row_count + ' tasks' : '';
+          var syncedAt = fileEntry.synced_at ? fileEntry.synced_at.slice(0, 10) : '';
+          var metaParts = [rowCount, syncedAt].filter(Boolean).join(' · ');
+
+          var checkboxId = 'cb-' + filename.replace(/[^a-z0-9]/gi, '-');
+          var sliderId = 'sl-' + filename.replace(/[^a-z0-9]/gi, '-');
+
+          // Initial opacity display: round to 2 decimal places
+          var opacityPct = Math.round(defaultOpacity * 100);
+
+          card.innerHTML =
+            '<div class="file-card-header">' +
+              '<input type="checkbox" id="' + checkboxId + '" data-filename="' + _escAttr(filename) + '"' +
+                (_checkedFiles[filename] ? ' checked' : '') + '>' +
+              '<label class="file-card-name" for="' + checkboxId + '">' + _escHtml(humanName) + '</label>' +
+            '</div>' +
+            (metaParts ? '<div class="file-card-meta">' + _escHtml(metaParts) + '</div>' : '') +
+            '<div class="file-card-opacity' + (_checkedFiles[filename] ? ' visible' : '') + '" data-for="' + _escAttr(filename) + '">' +
+              '<label for="' + sliderId + '">' +
+                'Opacity' +
+                '<input type="range" class="opacity-slider" id="' + sliderId + '"' +
+                  ' min="0.05" max="1" step="0.05" value="' + defaultOpacity + '">' +
+                '<span class="opacity-value">' + opacityPct + '%</span>' +
+              '</label>' +
+            '</div>';
+
+          listEl.appendChild(card);
+
+          // ── Checkbox event ──────────────────────────────────────
+          var checkbox = card.querySelector('input[type="checkbox"]');
+          var opacityDiv = card.querySelector('.file-card-opacity');
+
+          checkbox.addEventListener('change', function () {
+            _checkedFiles[filename] = checkbox.checked;
+
+            // Show/hide opacity slider
+            if (checkbox.checked) {
+              opacityDiv.classList.add('visible');
+            } else {
+              opacityDiv.classList.remove('visible');
+            }
+
+            _applyCheckedState();
+          });
+
+          // ── Opacity slider event ────────────────────────────────
+          var slider = card.querySelector('.opacity-slider');
+          var opacityValueEl = card.querySelector('.opacity-value');
+
+          slider.addEventListener('input', function () {
+            var val = parseFloat(slider.value);
+            opacityValueEl.textContent = Math.round(val * 100) + '%';
+
+            // Live update — if in overlay mode, call setOpacity directly
+            if (_currentMode === 'overlay' && window.PPGanttOverlay) {
+              window.PPGanttOverlay.setOpacity(filename, val);
+            }
+          });
+        });
+      }
+
+      // ─── Tiny HTML helpers ──────────────────────────────────────────
+
+      function _escHtml(str) {
+        if (!str) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function _escAttr(str) {
+        if (!str) return '';
+        return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      // ─── Expose hook for the bootstrap IIFE's on_click ────────────
+
+      window.PPGanttApp = Object.assign({}, window.PPGanttApp || {});
+
+      // ─── Init: load manifest on DOMContentLoaded ────────────────────
+      //
+      // The bootstrap IIFE already fires a DOMContentLoaded listener that
+      // loads and renders the fixture. We add our own DOMContentLoaded
+      // listener here — both will fire; order is declaration order.
+      //
+      // We wait until after the existing bootstrap has had a chance to
+      // render (by using a 0ms setTimeout inside DOMContentLoaded) so
+      // the sidebar appears to "layer on top" of an already-rendered chart.
+
+      document.addEventListener('DOMContentLoaded', function () {
+        if (!window.PPGanttLoader) {
+          console.warn('[PPGanttApp] loader.js not loaded — sidebar disabled');
+          return;
+        }
+
+        window.PPGanttLoader.loadManifest().then(function (manifest) {
+          _manifestFiles = manifest.files || [];
+
+          // Always show sidebar (even with just 1 file, so user can see what's loaded)
+          _showSidebar();
+          _buildSidebar(_manifestFiles);
+
+        }).catch(function (err) {
+          // Manifest load failure is non-fatal — the fixture bootstrap above
+          // still works without it. Just log and skip the sidebar.
+          console.warn('[PPGanttApp] Could not load manifest (sidebar disabled):', err.message);
+        });
+      });
+
+    }());
+  </script>
+
+</body>
+</html>

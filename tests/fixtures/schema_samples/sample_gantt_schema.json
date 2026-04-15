@@ -1,0 +1,45 @@
+{
+  "title": "MVP Implementation Gantt V2 (Apr 9)",
+  "properties": {
+    "Task Name": { "type": "title" },
+    "Start Date": { "type": "date" },
+    "End Date": { "type": "date" },
+    "Duration": { "type": "rich_text" },
+    "Duration (days)": { "type": "number" },
+    "Blocked by": { "type": "relation" },
+    "Phase": {
+      "type": "select",
+      "options": [
+        "Phase 0.5 - Security",
+        "Phase 1 - Foundation",
+        "Phase 2A - User Features",
+        "Phase 2B - Infrastructure",
+        "Phase 2C - White-Label",
+        "Phase 3 - Integration",
+        "App Store Track"
+      ]
+    },
+    "Stream": {
+      "type": "select",
+      "options": ["Shared", "Stream A (Lourenco)", "Stream B (Peter)", "White-Label", "App Store"]
+    },
+    "Owner": {
+      "type": "select",
+      "options": ["Peter", "Lourenco", "Both"]
+    },
+    "Status": {
+      "type": "status",
+      "options": ["Not started", "In progress", "Done"]
+    },
+    "Completion %": { "type": "number" },
+    "Risk Level": {
+      "type": "select",
+      "options": ["None", "Medium", "High", "Critical"]
+    },
+    "Critical Path": { "type": "checkbox" },
+    "Is Milestone": { "type": "checkbox" },
+    "Slack days": { "type": "number" },
+    "Reference": { "type": "rich_text" },
+    "Notes": { "type": "rich_text" }
+  }
+}

@@ -1,0 +1,481 @@
+/*
+ * gantt-custom.css
+ * PPGantt custom styles implementing all 6 visual dimensions:
+ *   1. Phase colors (7 phase classes -> bar fill)
+ *   2. Completion % (Frappe Gantt native progress bar)
+ *   3. Critical path (thick stroke on bar)
+ *   4. Risk level (outer glow via drop-shadow)
+ *   5. Milestone (diamond shape via CSS transform)
+ *   6. Slack tails (dashed SVG line injected by viewer.js post-render)
+ *
+ * Phase palette:
+ *   Phase 0.5 - Security:      #E03E3E
+ *   Phase 1 - Foundation:      #F59E0B
+ *   Phase 2A - Storefront:     #3B82F6
+ *   Phase 2B - Backend:        #8B5CF6
+ *   Phase 2C - Payments:       #EC4899
+ *   Phase 3 - Integration:     #10B981
+ *   Launch Track:              #EAB308
+ */
+
+/* ============================================================
+   DIMENSION 1 — Phase colors (bar fill)
+   ============================================================ */
+
+.gantt .bar-wrapper.phase-0-5-security .bar {
+  fill: #E03E3E;
+}
+.gantt .bar-wrapper.phase-0-5-security .bar-progress {
+  fill: #E03E3E;
+}
+
+.gantt .bar-wrapper.phase-1-foundation .bar {
+  fill: #F59E0B;
+}
+.gantt .bar-wrapper.phase-1-foundation .bar-progress {
+  fill: #F59E0B;
+}
+
+.gantt .bar-wrapper.phase-2a-storefront .bar {
+  fill: #3B82F6;
+}
+.gantt .bar-wrapper.phase-2a-storefront .bar-progress {
+  fill: #3B82F6;
+}
+
+.gantt .bar-wrapper.phase-2b-backend .bar {
+  fill: #8B5CF6;
+}
+.gantt .bar-wrapper.phase-2b-backend .bar-progress {
+  fill: #8B5CF6;
+}
+
+.gantt .bar-wrapper.phase-2c-payments .bar {
+  fill: #EC4899;
+}
+.gantt .bar-wrapper.phase-2c-payments .bar-progress {
+  fill: #EC4899;
+}
+
+.gantt .bar-wrapper.phase-3-integration .bar {
+  fill: #10B981;
+}
+.gantt .bar-wrapper.phase-3-integration .bar-progress {
+  fill: #10B981;
+}
+
+.gantt .bar-wrapper.launch-track .bar {
+  fill: #EAB308;
+}
+.gantt .bar-wrapper.launch-track .bar-progress {
+  fill: #EAB308;
+}
+
+/* Hover states: slightly darken the bar */
+.gantt .bar-wrapper.phase-0-5-security:hover .bar { fill: #c43030; }
+.gantt .bar-wrapper.phase-1-foundation:hover .bar { fill: #d48609; }
+.gantt .bar-wrapper.phase-2a-storefront:hover .bar { fill: #2563d4; }
+.gantt .bar-wrapper.phase-2b-backend:hover .bar { fill: #6d3dd4; }
+.gantt .bar-wrapper.phase-2c-payments:hover .bar { fill: #c4277a; }
+.gantt .bar-wrapper.phase-3-integration:hover .bar { fill: #0a8a5e; }
+.gantt .bar-wrapper.launch-track:hover .bar { fill: #c49106; }
+
+/* ============================================================
+   DIMENSION 2 — Completion % (Frappe Gantt handles this natively)
+   Make progress bars consistent and slightly lighter than phase bar fill.
+   The .bar-progress colors above handle per-phase tinting.
+   ============================================================ */
+
+.gantt .bar-progress {
+  opacity: 1;
+}
+
+.gantt .bar {
+  fill-opacity: 0.62;
+  stroke: #000000;
+  stroke-width: 1.5px;
+  stroke-opacity: 1;
+}
+
+.gantt text.bar-label,
+.gantt .bar-label,
+.gantt .bar-invalid ~ .bar-label {
+  opacity: 1;
+  fill: #ffffff;
+  stroke: none !important;
+  stroke-width: 0 !important;
+  stroke-opacity: 0 !important;
+  paint-order: normal;
+  font-weight: 600;
+}
+
+.gantt text.bar-label.big,
+.gantt .bar-label.big {
+  opacity: 1 !important;
+  fill: #ffffff !important;
+  stroke: none !important;
+  stroke-width: 0 !important;
+  stroke-opacity: 0 !important;
+}
+
+/* ============================================================
+   DIMENSION 3 — Critical path (thick stroke on bar)
+   ============================================================ */
+
+.gantt .bar-wrapper.critical-path .bar {
+  stroke: #ffffff;
+  stroke-width: 3px;
+}
+
+/* ============================================================
+   DIMENSION 4 — Risk level glows (drop-shadow filter on bar)
+   none (default): no glow
+   medium: yellow glow
+   high: orange glow
+   critical: red glow
+   ============================================================ */
+
+.gantt .bar-wrapper.risk-medium .bar {
+  filter: drop-shadow(0 0 4px #fcd34d) drop-shadow(0 0 2px #fbbf24);
+}
+
+.gantt .bar-wrapper.risk-high .bar {
+  filter: drop-shadow(0 0 5px #f97316) drop-shadow(0 0 3px #ea6a0a);
+}
+
+.gantt .bar-wrapper.risk-critical .bar {
+  filter: drop-shadow(0 0 6px #ef4444) drop-shadow(0 0 4px #dc2626);
+}
+
+/* When critical-path and risk combine, apply both (critical-path uses stroke,
+   risk uses filter — they compose without conflict) */
+.gantt .bar-wrapper.critical-path.risk-medium .bar {
+  stroke: #ffffff;
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 4px #fcd34d) drop-shadow(0 0 2px #fbbf24);
+}
+
+.gantt .bar-wrapper.critical-path.risk-high .bar {
+  stroke: #ffffff;
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 5px #f97316) drop-shadow(0 0 3px #ea6a0a);
+}
+
+.gantt .bar-wrapper.critical-path.risk-critical .bar {
+  stroke: #ffffff;
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 6px #ef4444) drop-shadow(0 0 4px #dc2626);
+}
+
+/* ============================================================
+   DIMENSION 5 — Milestone diamond shape
+   Frappe Gantt has no native milestone support.
+   We use a clipPath polygon approach: the bar-group gets a
+   rotated transform so the rect appears as a diamond.
+   viewer.js also marks these bars with a data attribute so
+   the post-render pass can fine-tune geometry.
+   ============================================================ */
+
+/* Primary approach: rotate the bar-group 45deg and scale it
+   to create a diamond. The bar-label is counter-rotated in JS. */
+.gantt .bar-wrapper.milestone .bar-group {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(45deg) scale(0.65);
+}
+
+/* Counter-rotate the label so it reads normally (applied via JS in viewer.js) */
+.gantt .bar-wrapper.milestone .bar-label {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(-45deg) scale(1.54);
+  font-size: 10px;
+}
+
+/* Hide resize handles on milestones — they don't make sense */
+.gantt .bar-wrapper.milestone .handle {
+  display: none;
+}
+
+/* Milestone bars should have no corner radius (pure diamond) */
+.gantt .bar-wrapper.milestone .bar {
+  rx: 0;
+  ry: 0;
+}
+
+/* ============================================================
+   DIMENSION 6 — Slack tails
+   Slack tail lines are SVG <line> elements injected by viewer.js
+   into the bar-wrapper <g> after Frappe Gantt renders.
+   We style them here.
+   ============================================================ */
+
+.gantt .slack-tail {
+  stroke: #94a3b8;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+/* Phase-tinted slack tails for readability */
+.gantt .bar-wrapper.phase-0-5-security .slack-tail { stroke: #E03E3E; opacity: 0.5; }
+.gantt .bar-wrapper.phase-1-foundation .slack-tail { stroke: #F59E0B; opacity: 0.5; }
+.gantt .bar-wrapper.phase-2a-storefront .slack-tail { stroke: #3B82F6; opacity: 0.5; }
+.gantt .bar-wrapper.phase-2b-backend .slack-tail { stroke: #8B5CF6; opacity: 0.5; }
+.gantt .bar-wrapper.phase-2c-payments .slack-tail { stroke: #EC4899; opacity: 0.5; }
+.gantt .bar-wrapper.phase-3-integration .slack-tail { stroke: #10B981; opacity: 0.5; }
+.gantt .bar-wrapper.launch-track .slack-tail { stroke: #EAB308; opacity: 0.5; }
+
+/* ============================================================
+   GENERAL UI ENHANCEMENTS
+   ============================================================ */
+
+/* Page chrome */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+/* Header bar */
+#ppgantt-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  z-index: 100;
+}
+
+#ppgantt-header h1 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+#ppgantt-header .subtitle {
+  font-size: 12px;
+  color: #64748b;
+  margin-left: auto;
+}
+
+/* Zoom controls */
+#zoom-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+#zoom-controls label {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-right: 6px;
+}
+
+.zoom-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+.zoom-btn:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.zoom-btn.active {
+  background: #3B82F6;
+  color: #fff;
+  border-color: #3B82F6;
+}
+
+#month-layout-btn {
+  margin-left: 8px;
+}
+
+#month-layout-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Error banner */
+#error-banner {
+  display: none;
+  background: #7f1d1d;
+  color: #fca5a5;
+  padding: 10px 20px;
+  font-size: 13px;
+  border-bottom: 1px solid #991b1b;
+}
+
+/* Loading banner */
+#loading-banner {
+  color: #64748b;
+  padding: 40px 20px;
+  text-align: center;
+  font-size: 14px;
+}
+
+/* Gantt container wrapper */
+#gantt-wrapper {
+  padding: 8px 0 16px;
+}
+
+/* Override Frappe Gantt grid for dark theme */
+.gantt .grid-background {
+  fill: #0f172a;
+}
+
+.gantt .grid-header {
+  fill: #1e293b;
+  stroke: #334155;
+}
+
+.gantt .grid-row {
+  fill: #0f172a;
+}
+
+.gantt .grid-row:nth-child(even) {
+  fill: #111827;
+}
+
+.gantt .row-line {
+  stroke: #1e293b;
+}
+
+.gantt .tick {
+  stroke: #1e293b;
+}
+
+.gantt .tick.thick {
+  stroke: #334155;
+  stroke-width: 0.6;
+}
+
+.gantt .today-highlight {
+  fill: #1e3a5f;
+  opacity: 0.4;
+}
+
+.gantt .arrow {
+  stroke: #475569;
+  stroke-width: 1.5;
+}
+
+.gantt .upper-text {
+  fill: #64748b;
+  font-size: 11px;
+}
+
+.gantt .lower-text {
+  fill: #94a3b8;
+  font-size: 11px;
+}
+
+.gantt .bar-label.big {
+  fill: #f8fafc;
+  font-weight: 500;
+  paint-order: stroke;
+  stroke: rgba(15, 23, 42, 0.92);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+/* Popup (tooltip) dark theme */
+.gantt-container .popup-wrapper {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  min-width: 260px;
+  max-width: 360px;
+  color: #e2e8f0;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+.gantt-container .popup-wrapper .title {
+  border-bottom: 2px solid #334155;
+  padding: 10px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #f1f5f9;
+}
+
+.gantt-container .popup-wrapper .subtitle {
+  padding: 10px 14px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.gantt-container .popup-wrapper .pointer {
+  border-top-color: #1e293b;
+}
+
+/* Custom popup fields */
+.popup-meta {
+  padding: 10px 14px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+
+.popup-meta .meta-label {
+  color: #64748b;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.popup-meta .meta-value {
+  color: #e2e8f0;
+}
+
+.popup-meta .meta-value.risk-none { color: #6ee7b7; }
+.popup-meta .meta-value.risk-medium { color: #fcd34d; }
+.popup-meta .meta-value.risk-high { color: #fb923c; }
+.popup-meta .meta-value.risk-critical { color: #f87171; }
+
+.popup-notes {
+  padding: 8px 14px 12px;
+  font-size: 11px;
+  color: #64748b;
+  font-style: italic;
+  border-top: 1px solid #1e293b;
+}
+
+/* Legend */
+#legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  padding: 10px 20px;
+  background: #1e293b;
+  border-top: 1px solid #334155;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}

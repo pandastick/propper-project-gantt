@@ -1,0 +1,29 @@
+# Environment & secrets
+.env
+sync/.env
+
+# Python
+sync/.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Agent memory & private docs
+_docs/
+CLAUDE.md
+plan.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

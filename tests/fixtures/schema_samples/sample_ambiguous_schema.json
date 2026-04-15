@@ -1,0 +1,15 @@
+{
+  "title": "Q2 Roadmap",
+  "properties": {
+    "Feature": { "type": "title" },
+    "Kickoff": { "type": "date" },
+    "Deadline": { "type": "date" },
+    "Depends On": { "type": "relation" },
+    "Category": {
+      "type": "select",
+      "options": ["Infrastructure", "Product", "Marketing"]
+    },
+    "Progress": { "type": "number" },
+    "Is Blocker": { "type": "checkbox" }
+  }
+}

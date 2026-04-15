@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-09T14:00:00Z",
+  "files": [
+    {
+      "filename": "_fixture.json",
+      "table_name": "PPGantt Dev Fixture — Shop Launch",
+      "notion_url": "https://www.notion.so/fixture/ppgantt-dev-fixture",
+      "data_source_id": "collection://fixture-dev-0000",
+      "synced_at": "2026-04-09T13:00:00Z",
+      "row_count": 12,
+      "is_fixture": true
+    },
+    {
+      "filename": "_fixture2.json",
+      "table_name": "PPGantt Dev Fixture — Shop Launch (+14d)",
+      "notion_url": "https://www.notion.so/fixture/ppgantt-dev-fixture-scenario-b",
+      "data_source_id": "collection://fixture-dev-0001",
+      "synced_at": "2026-04-09T14:00:00Z",
+      "row_count": 12,
+      "is_fixture": true
+    }
+  ]
+}

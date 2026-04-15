@@ -1,0 +1,23 @@
+{
+  "name": "propper-project-gantt",
+  "version": "1.0.0",
+  "description": "Local-first Gantt viewer with slack-aware schedule simulation. Augments Notion without replacing it.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node tests/test_cascade.js && node js/change-log.js"
+  },
+  "keywords": [
+    "gantt",
+    "notion",
+    "roadmap",
+    "local-first",
+    "schedule-simulation",
+    "critical-path"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
