@@ -23,6 +23,11 @@ body.overlay-sidebar-open #legend {
   margin-left: 220px;
 }
 
+body.overlay-sidebar-open #related-banner,
+body.overlay-sidebar-open #related-pane {
+  margin-left: 220px;
+}
+
 /* ─── Sidebar panel ───────────────────────────────────────────────────────── */
 
 #ppgantt-sidebar {

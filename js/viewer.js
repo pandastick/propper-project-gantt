@@ -81,6 +81,20 @@
     return (days * hoursPerDay / g.options.step) * g.options.column_width;
   }
 
+  /**
+   * Format a Date (or ISO string) as "YYYY-MM-DD" using LOCAL time —
+   * Frappe Gantt emits local-time Date objects for on_date_change.
+   */
+  function _dateToIso(value) {
+    if (!value) return '';
+    if (typeof value === 'string') return value.slice(0, 10);
+    if (!(value instanceof Date) || isNaN(value.getTime())) return '';
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+
   function _taskTimeValue(task, field) {
     const value = task && task[field];
     const time = value ? new Date(value + 'T00:00:00').getTime() : NaN;
@@ -306,6 +320,62 @@
       .replace(/^-+|-+$/g, '');
   }
 
+  // ─── Stream stripe (left-edge accent) ────────────────────────────────────
+
+  const STREAM_COLOR = {
+    'stream b (peter)':    '#3B82F6',
+    'stream a (lourenço)': '#A855F7',
+    'stream a (lourenco)': '#A855F7',
+    'shared':              '#9CA3AF',
+    'app store':           '#EAB308',
+    'white-label':         '#EC4899'
+  };
+
+  function _streamColor(stream) {
+    if (!stream) return null;
+    return STREAM_COLOR[String(stream).toLowerCase()] || null;
+  }
+
+  function _applyStreamStripes() {
+    if (!_ganttInstance) return;
+    const svg = _ganttInstance.$svg;
+    if (!svg) return;
+
+    _tasks.forEach(function (task) {
+      const stream = task.meta && task.meta.stream;
+      const color = _streamColor(stream);
+      if (!color) return;
+
+      const wrapper = svg.querySelector('[data-id="' + task.id + '"]');
+      if (!wrapper) return;
+      const bar = wrapper.querySelector('.bar');
+      if (!bar) return;
+
+      const existing = wrapper.querySelector('.stream-stripe');
+      if (existing) existing.remove();
+
+      const barX = parseFloat(bar.getAttribute('x')) || 0;
+      const barY = parseFloat(bar.getAttribute('y')) || 0;
+      const barH = parseFloat(bar.getAttribute('height')) || 0;
+
+      const ns = 'http://www.w3.org/2000/svg';
+      const stripe = document.createElementNS(ns, 'rect');
+      stripe.setAttribute('class', 'stream-stripe');
+      stripe.setAttribute('x', barX);
+      stripe.setAttribute('y', barY);
+      stripe.setAttribute('width', 5);
+      stripe.setAttribute('height', barH);
+      stripe.setAttribute('rx', 2);
+      stripe.setAttribute('fill', color);
+      stripe.setAttribute('pointer-events', 'none');
+
+      // Append as last child of .bar-wrapper so it paints on top of the bar
+      // (the label lives inside a nested .bar-group and is not a direct child
+      // of .bar-wrapper, so insertBefore would throw during resize re-renders).
+      wrapper.appendChild(stripe);
+    });
+  }
+
   // ─── Milestone post-processing ────────────────────────────────────────────
 
   /**
@@ -447,6 +517,76 @@
     dateLayer.setAttribute('transform', transform);
   }
 
+  // ─── Popup control: suppress during handle-drag, dismiss on click-away ───
+
+  /** @type {Function|null} Cleanup for popup-related document/SVG listeners */
+  let _popupControlCleanup = null;
+
+  function _bindPopupControl() {
+    if (_popupControlCleanup) {
+      _popupControlCleanup();
+      _popupControlCleanup = null;
+    }
+    if (!_ganttInstance || !_ganttInstance.$svg) return;
+
+    const svg = _ganttInstance.$svg;
+
+    // When the user begins a resize drag, Frappe's bar-wrapper receives focus
+    // (because the wrapper is focusable) which triggers `show_popup` BEFORE
+    // `bar_being_dragged` is set. We pre-set the flag on handle mousedown so
+    // show_popup early-returns. Native mouseup clears it back to null.
+    //
+    // Also intercept SHIFT+click on a bar-wrapper as the trigger for the
+    // Related-Tasks focus mode. We dispatch a ppgantt:related-focus CustomEvent
+    // from the SVG so index.html can hand-off without the viewer knowing any
+    // app state. stopPropagation in the capture phase prevents Frappe's
+    // bubble-phase bar handler from firing the popup or the push dialog.
+    const onBarMouseDown = function (ev) {
+      const handle = ev.target && ev.target.closest && ev.target.closest('.handle');
+      if (handle && _ganttInstance) {
+        _ganttInstance.bar_being_dragged = '__resize__';
+        if (typeof _ganttInstance.hide_popup === 'function') {
+          _ganttInstance.hide_popup();
+        }
+        return;
+      }
+
+      const barWrapper = ev.target && ev.target.closest && ev.target.closest('.bar-wrapper');
+      if (barWrapper && ev.shiftKey) {
+        const taskId = barWrapper.getAttribute('data-id');
+        if (!taskId) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (_ganttInstance && typeof _ganttInstance.hide_popup === 'function') {
+          _ganttInstance.hide_popup();
+        }
+        svg.dispatchEvent(new CustomEvent('ppgantt:related-focus', {
+          bubbles: false,
+          detail: { taskId: taskId }
+        }));
+      }
+    };
+    svg.addEventListener('mousedown', onBarMouseDown, true);
+
+    // Click-away dismiss: clicking anywhere that is not a bar and not the
+    // popup itself should hide the popup. Frappe only dismisses on .grid-row
+    // and .grid-header clicks.
+    const onDocumentMouseDown = function (ev) {
+      if (!_ganttInstance || typeof _ganttInstance.hide_popup !== 'function') return;
+      const target = ev.target;
+      if (!target || !(target instanceof Element)) return;
+      if (target.closest('.popup-wrapper')) return;
+      if (target.closest('.bar-wrapper')) return;
+      _ganttInstance.hide_popup();
+    };
+    document.addEventListener('mousedown', onDocumentMouseDown, true);
+
+    _popupControlCleanup = function () {
+      svg.removeEventListener('mousedown', onBarMouseDown, true);
+      document.removeEventListener('mousedown', onDocumentMouseDown, true);
+    };
+  }
+
   function _bindStickyTimelineHeader() {
     _clearStickyTimelineBinding();
 
@@ -529,12 +669,21 @@
           // For now, no-op. Popup is handled by Frappe Gantt's own popup_trigger.
         },
         on_date_change: function (task, start, end) {
-          // STUB: change-log.js will hook into this in the integration pass
+          // Frappe passes (task, start, end-1second). The -1s ensures that
+          // converting to a local calendar date via _dateToIso produces the
+          // same ISO string the JSON contract uses (inclusive end date).
+          const isoStart = _dateToIso(start);
+          const isoEnd = _dateToIso(end);
+          if (!isoStart || !isoEnd) return;
+          if (typeof _renderOptions.on_drag === 'function') {
+            _renderOptions.on_drag(task, isoStart, isoEnd);
+          }
         },
         on_view_change: function (mode) {
           _viewMode = mode;
-          // Re-apply slack tails when view mode changes (pixel scale changes)
+          // Re-apply slack tails + stream stripes when view mode changes (pixel scale changes)
           _applySlackTails();
+          _applyStreamStripes();
           _applyStickyTimelinePosition();
           // Update active zoom button in the UI
           _syncZoomButtons(mode);
@@ -574,9 +723,11 @@
       requestAnimationFrame(function () {
         _applySlackTails();
         _annotateMilestones();
+        _applyStreamStripes();
         _promoteBarLabels();
         _applyLabelContrast();
         _bindStickyTimelineHeader();
+        _bindPopupControl();
       });
     });
   }
@@ -652,7 +803,8 @@
     getPalette: function () { return _palette; },
     getViewMode: function () { return _viewMode; },
     isMonthLayoutCompact: function () { return _compactMonthLayout; },
-    reapplySlackTails: _applySlackTails
+    reapplySlackTails: _applySlackTails,
+    reapplyStreamStripes: _applyStreamStripes
   };
 
 }(window));

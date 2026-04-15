@@ -231,14 +231,23 @@
    GENERAL UI ENHANCEMENTS
    ============================================================ */
 
-/* Page chrome */
+/* Page chrome — flex column, exactly viewport-sized, so the gantt-wrapper
+   can claim the remaining space between header/banner above and pane/legend
+   below and still scroll internally. `min-height: 100vh` would have let the
+   body grow past the viewport and the wrapper's flex:1 would then grab the
+   extra space, preventing it from clamping. */
+html, body {
+  height: 100%;
+}
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   background: #0f172a;
   color: #e2e8f0;
   margin: 0;
   padding: 0;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* Header bar */
@@ -250,6 +259,32 @@ body {
   background: #1e293b;
   border-bottom: 1px solid #334155;
   z-index: 100;
+  flex-shrink: 0;
+}
+
+/* Hamburger toggle for the files sidebar */
+#sidebar-hamburger {
+  display: none; /* JS reveals when manifest loads */
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+#sidebar-hamburger:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+#sidebar-hamburger.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #ffffff;
 }
 
 #ppgantt-header h1 {
@@ -328,9 +363,16 @@ body {
   font-size: 14px;
 }
 
-/* Gantt container wrapper */
+/* Gantt container wrapper — flex-grows to fill available vertical space
+   between the header/banner above and the pane/legend below.
+   `min-height: 0` is CRITICAL: without it the flex item won't shrink below
+   its content size and overflow:auto becomes a no-op. */
 #gantt-wrapper {
   padding: 8px 0 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
 }
 
 /* Override Frappe Gantt grid for dark theme */
@@ -465,6 +507,7 @@ body {
   border-top: 1px solid #334155;
   font-size: 11px;
   color: #64748b;
+  flex-shrink: 0;
 }
 
 .legend-item {
@@ -478,4 +521,287 @@ body {
   height: 12px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+/* ─── Related-Tasks focus mode ──────────────────────────────────────────
+   Shift-click a bar to enter focus mode: the viewer filters to the task's
+   full connected component, unrelated bars fade out in place, and a bottom-
+   docked pane slides up with metadata cards.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* Bars that aren't in the focused component fade to a ghost-faint tint so
+   grid rows stay visually stable during the cross-fade re-render. */
+.gantt .bar-wrapper.is-fading-out {
+  transition: opacity 180ms ease-out;
+}
+.gantt .bar-wrapper.is-fading-out.faded {
+  opacity: 0.08;
+}
+
+/* Applied to #gantt-container around a re-render; crosses the new SVG in
+   at opacity 0 → 1 over 160ms so the filter change feels gentle. */
+#gantt-container.gantt-mounting svg {
+  opacity: 0;
+  transition: opacity 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+#gantt-container svg {
+  opacity: 1;
+  transition: opacity 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Banner above the Gantt explaining the active focus */
+#related-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.18), rgba(168, 85, 247, 0.10));
+  border-bottom: 1px solid rgba(59, 130, 246, 0.45);
+  color: #e2e8f0;
+  font-size: 13px;
+  flex-shrink: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+#related-banner[hidden] { display: none; }
+#related-banner.open {
+  opacity: 1;
+  transform: translateY(0);
+}
+#related-banner strong {
+  color: #f8fafc;
+  font-weight: 600;
+}
+#related-banner-exit {
+  background: rgba(15, 23, 42, 0.55);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+#related-banner-exit:hover {
+  background: rgba(15, 23, 42, 0.85);
+  border-color: rgba(148, 163, 184, 0.65);
+}
+
+/* Bottom-docked detail pane — a flex sibling at the bottom of the body
+   column. Fixed height. Never covers the chart because #gantt-wrapper has
+   its own internal scroll and shrinks to fill only the remaining space. */
+#related-pane {
+  flex: 0 0 auto;
+  height: 210px;
+  min-height: 210px;
+  background: #0f172a;
+  border-top: 1px solid #334155;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 240ms cubic-bezier(0.4, 0, 0.2, 1),
+              transform 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+#related-pane[hidden] { display: none; }
+#related-pane.open {
+  opacity: 1;
+  transform: translateY(0);
+}
+#related-pane header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 16px;
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+  min-height: 28px;
+}
+#related-pane .rp-titles {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+#related-pane h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70vw;
+}
+#related-pane-count {
+  font-size: 10px;
+  color: #94a3b8;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+#related-pane-close {
+  background: transparent;
+  border: 0;
+  color: #94a3b8;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 6px;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+#related-pane-close:hover { color: #f8fafc; }
+
+/* Horizontally-scrolling card strip */
+#related-pane-cards {
+  display: flex;
+  gap: 10px;
+  padding: 10px 16px 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  min-height: 0;
+  scrollbar-width: thin;
+}
+#related-pane-cards::-webkit-scrollbar {
+  height: 8px;
+}
+#related-pane-cards::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+/* Individual task card — compact, full pane height, no Y overflow */
+.related-card {
+  flex-shrink: 0;
+  width: 240px;
+  height: 100%;
+  box-sizing: border-box;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-left: 4px solid var(--rc-phase, #6B7280);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.related-card.is-root {
+  border-color: #60a5fa;
+  border-left-width: 4px;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.55);
+}
+.related-card .rc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+.related-card .rc-title {
+  font-weight: 600;
+  color: #f1f5f9;
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.related-card .rc-title:hover {
+  color: #93c5fd;
+}
+.related-card .rc-pill {
+  flex-shrink: 0;
+  background: #60a5fa;
+  color: #0b1220;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.related-card .rc-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 18px;
+}
+.related-card .rc-badge {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.related-card .rc-milestone {
+  background: rgba(139, 92, 246, 0.22);
+  color: #c4b5fd;
+}
+.related-card .rc-critical {
+  background: rgba(0, 0, 0, 0.6);
+  color: #fde68a;
+  border: 1px solid rgba(253, 230, 138, 0.5);
+}
+.related-card .rc-risk-low { background: rgba(234, 179, 8, 0.15); color: #fde047; }
+.related-card .rc-risk-medium { background: rgba(249, 115, 22, 0.2); color: #fdba74; }
+.related-card .rc-risk-high { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+.related-card .rc-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+  font-size: 10px;
+}
+.related-card .rc-meta > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.related-card .rc-label {
+  color: #64748b;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.related-card .rc-value {
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.related-card .rc-stream-chip {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.related-card .rc-notion {
+  color: #60a5fa;
+  font-size: 10px;
+  text-decoration: none;
+  margin-top: auto;
+}
+.related-card .rc-notion:hover { text-decoration: underline; }
+
+/* Pane is now in normal flow — no wrapper padding compensation needed. */
+
+/* Reduced motion: collapse the fade/slide transitions but keep the feature
+   functional for users who prefer instant state changes. */
+@media (prefers-reduced-motion: reduce) {
+  .gantt .bar-wrapper.is-fading-out,
+  #gantt-container.gantt-mounting svg,
+  #gantt-container svg,
+  #related-banner,
+  #related-pane {
+    transition-duration: 0.01ms !important;
+  }
 }

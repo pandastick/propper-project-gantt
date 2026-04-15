@@ -183,6 +183,9 @@
 
   <!-- ─── Header ─────────────────────────────────────────────────────────── -->
   <div id="ppgantt-header">
+    <button id="sidebar-hamburger" type="button" aria-label="Toggle files sidebar" title="Toggle files sidebar">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4 h12 M2 8 h12 M2 12 h12"/></svg>
+    </button>
     <h1>PPGantt</h1>
 
     <!-- Zoom level selector -->
@@ -213,6 +216,15 @@
       <span id="focus-summary"></span>
     </div>
 
+    <div id="stream-legend" style="display:flex;gap:12px;align-items:center;font-size:11px;color:#94a3b8;margin-left:12px;">
+      <span style="font-weight:600;letter-spacing:.04em;">STREAMS</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#3B82F6;"></span>Peter</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#A855F7;"></span>Lourenço</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#9CA3AF;"></span>Shared</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#EAB308;"></span>App Store</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#EC4899;"></span>White-Label</span>
+    </div>
+
     <span class="subtitle" id="data-source-label"></span>
 
     <!-- Simulation controls (Wave 1 integration) -->
@@ -228,10 +240,28 @@
   <div id="error-banner" role="alert"></div>
 
   <!-- ─── Main chart area ─────────────────────────────────────────────────── -->
+  <!-- Related-focus banner (shown when SHIFT+click focus mode is active) -->
+  <div id="related-banner" hidden>
+    <span id="related-banner-text"></span>
+    <button id="related-banner-exit" type="button">Exit focus</button>
+  </div>
+
   <div id="gantt-wrapper">
     <div id="loading-banner">Loading fixture data...</div>
     <div id="gantt-container"></div>
   </div>
+
+  <!-- Related-focus bottom pane (metadata cards for the connected component) -->
+  <aside id="related-pane" hidden aria-label="Related tasks detail pane">
+    <header>
+      <div class="rp-titles">
+        <h3 id="related-pane-title">Related tasks</h3>
+        <span id="related-pane-count"></span>
+      </div>
+      <button id="related-pane-close" type="button" aria-label="Close related tasks pane">×</button>
+    </header>
+    <div id="related-pane-cards"></div>
+  </aside>
 
   <dialog id="export-fallback-dialog">
     <div class="dialog-body">
@@ -289,6 +319,13 @@
 
       var DEFAULT_FILENAME = '_fixture.json';
       var _focusFilter = { field: '', value: '' };
+
+      // Related-Tasks focus mode (shift-click a bar to enter).
+      //   rootId: id of the task the focus was pivoted on
+      //   ids:    Set<string> of tasks in the connected component (includes root)
+      //   suspendedFocusFilter: snapshot of _focusFilter saved on entry so we
+      //                         can restore the user's dropdown selection on exit.
+      var _relatedFocus = { rootId: null, ids: null, suspendedFocusFilter: null };
 
       // ─── Shared state for integration (simulator + change log) ──────────
       var _originalJson = null;   // Full JSON payload as loaded from disk
@@ -452,10 +489,18 @@
       }
 
       function _filterTasks(tasks) {
-        if (!_focusFilter.field || !_focusFilter.value) return tasks;
-        return (tasks || []).filter(function (task) {
-          return _getTaskMetaValue(task, _focusFilter.field) === _focusFilter.value;
-        });
+        var out = tasks || [];
+        // Related-focus wins: when active it bypasses the dropdown filter
+        // (the dropdown is temporarily suspended during focus mode).
+        if (_relatedFocus.ids) {
+          return out.filter(function (task) { return _relatedFocus.ids.has(task.id); });
+        }
+        if (_focusFilter.field && _focusFilter.value) {
+          out = out.filter(function (task) {
+            return _getTaskMetaValue(task, _focusFilter.field) === _focusFilter.value;
+          });
+        }
+        return out;
       }
 
       function _updateFocusSummary(visibleCount, totalCount) {
@@ -487,8 +532,20 @@
 
         renderGantt(container, filteredSchedule, _originalJson.phase_palette, {
           view_mode: _preferredViewMode,
-          on_click: function (task) { _handleTaskClick(task); }
+          on_click: function (task) { _handleTaskClick(task); },
+          on_drag: function (task, newStart, newEnd) { _handleDrag(task, newStart, newEnd); }
         });
+
+        // Wire the shift-click → related-focus CustomEvent from the viewer.
+        // The SVG is replaced on every render so we re-attach every time.
+        var svgEl = container.querySelector('svg');
+        if (svgEl) {
+          svgEl.addEventListener('ppgantt:related-focus', function (e) {
+            if (e && e.detail && e.detail.taskId) {
+              _enterRelatedFocus(e.detail.taskId);
+            }
+          });
+        }
 
         if (_activePushAmounts && window.PPGanttSimulator) {
           try {
@@ -576,8 +633,430 @@
         });
       }
 
-      function _applyPush(rootTaskId, pushDays) {
+      // ─── Drag handler (slack-aware cascade on forward moves) ─────────────
+
+      function _daysBetweenIso(isoA, isoB) {
+        var ms = 86400000;
+        var a = new Date(isoA + 'T00:00:00Z').getTime();
+        var b = new Date(isoB + 'T00:00:00Z').getTime();
+        return Math.round((b - a) / ms);
+      }
+
+      function _handleDrag(task, newStart, newEnd) {
+        if (!_originalJson || !_activeSchedule) return;
+        var taskId = task && task.id;
+        if (!taskId) return;
+
+        // Find the pre-drag row in the active schedule — Frappe mutated the
+        // task object in place so we can't rely on task.start/task.end.
+        var current = _activeSchedule.find(function (t) { return t.id === taskId; });
+        if (!current) return;
+
+        var oldStart = current.start;
+        var oldEnd = current.end;
+        if (oldStart === newStart && oldEnd === newEnd) return;
+
+        var startDelta = _daysBetweenIso(oldStart, newStart);
+        var endDelta = _daysBetweenIso(oldEnd, newEnd);
+
+        // Classify the drag:
+        //   - start moved forward === end moved forward  → whole-bar forward move → cascade
+        //   - start moved backward === end moved backward → whole-bar backward move → surgical
+        //   - only end changed, forward                  → duration extension → cascade end delta
+        //   - only end changed, backward                 → duration shrink → surgical
+        //   - only start changed                         → surgical (reshape left edge)
+        //   - anything else                              → surgical fallback
+        var isWholeBarMove = (startDelta === endDelta) && startDelta !== 0;
+        var isEndResizeOnly = (startDelta === 0) && endDelta !== 0;
+
+        if (isWholeBarMove && startDelta > 0) {
+          _applyPush(taskId, startDelta, { cascadeFromActive: true, reasonLabel: 'drag push' });
+          return;
+        }
+        if (isEndResizeOnly && endDelta > 0) {
+          // End-edge forward resize: duration extension.
+          //
+          // simulatePush() is a date-shift operator — it moves BOTH the root's
+          // start and end forward by N days, then cascades. For a duration
+          // extension we want the root's start to stay put while its end
+          // extends by N days, and dependents to cascade off the new end.
+          //
+          // Trick: run the normal cascade (which shifts everything correctly
+          // from the downstream point of view), then immediately revert the
+          // root task's start back to its pre-drag value. Root ends up as
+          // (oldStart, oldEnd + delta) — duration extended — while dependents
+          // still reflect the cascaded +delta push.
+          _applyPush(taskId, endDelta, { cascadeFromActive: true, reasonLabel: 'drag extend' });
+
+          if (_activeSchedule) {
+            var patched = _cloneSchedule(_activeSchedule);
+            var rootIdx = patched.findIndex(function (t) { return t.id === taskId; });
+            if (rootIdx !== -1 && patched[rootIdx].start !== oldStart) {
+              patched[rootIdx].start = oldStart;
+              _activeSchedule = patched;
+              if (window.PPGanttSimulator && _originalJson) {
+                window.PPGanttSimulator.saveSimulation({
+                  pushedTaskId: taskId,
+                  pushDays: endDelta,
+                  newSchedule: _activeSchedule,
+                  pushAmounts: _activePushAmounts,
+                  synced_at: _originalJson.source && _originalJson.source.synced_at,
+                  timestamp: new Date().toISOString()
+                });
+              }
+              _syncChangeLogFromSchedule();
+              _renderActiveSchedule();
+            }
+          }
+          return;
+        }
+
+        // Everything else → surgical edit: mutate only this task in place.
+        _applySurgicalEdit(taskId, newStart, newEnd, isWholeBarMove ? 'drag pull' : 'drag reshape');
+      }
+
+      function _applySurgicalEdit(taskId, newStart, newEnd, reasonLabel) {
+        if (!_originalJson || !_activeSchedule) return;
+
+        // Snapshot for undo
+        _simulationHistory.push({
+          schedule: _cloneSchedule(_activeSchedule),
+          pushAmounts: _clonePushAmounts(_activePushAmounts),
+          context: _lastSimulationContext ? {
+            rootTaskId: _lastSimulationContext.rootTaskId || '',
+            rootTaskName: _lastSimulationContext.rootTaskName || '',
+            pushAmounts: _clonePushAmounts(_lastSimulationContext.pushAmounts)
+          } : null
+        });
+
+        var clone = _cloneSchedule(_activeSchedule);
+        var idx = clone.findIndex(function (t) { return t.id === taskId; });
+        if (idx === -1) { _simulationHistory.pop(); return; }
+        clone[idx].start = newStart;
+        clone[idx].end = newEnd;
+        _activeSchedule = clone;
+
+        // Persist so a reload doesn't lose the drag
+        if (window.PPGanttSimulator) {
+          window.PPGanttSimulator.saveSimulation({
+            pushedTaskId: taskId,
+            pushDays: 0,
+            newSchedule: _activeSchedule,
+            pushAmounts: _activePushAmounts,
+            synced_at: _originalJson.source && _originalJson.source.synced_at,
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        _syncChangeLogFromSchedule();
+        _renderActiveSchedule();
+        _updateSimStatus();
+        _syncUndoButton();
+      }
+
+      // ─── Related-Tasks focus mode ────────────────────────────────────────
+      //
+      // Entered via SHIFT+click on any bar. Filters the view to the clicked
+      // task's full undirected connected component (predecessors + dependents
+      // recursively) and reveals a bottom-docked metadata pane. Exits via
+      // Escape, pane X, banner "Exit focus" button, or re-shift-clicking the
+      // same root task.
+
+      function _rfEscHtml(str) {
+        if (str == null) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function _findTaskInActive(taskId) {
+        var list = _activeSchedule || (_originalJson && _originalJson.tasks) || [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].id === taskId) return list[i];
+        }
+        return null;
+      }
+
+      function _enterRelatedFocus(taskId) {
+        if (!window.PPGanttSimulator || typeof window.PPGanttSimulator.taskLineage !== 'function') return;
+        if (!_activeSchedule && (!_originalJson || !_originalJson.tasks)) return;
+
+        // Toggle off if we're already focused on this exact task.
+        if (_relatedFocus.rootId === taskId) {
+          _exitRelatedFocus();
+          return;
+        }
+
+        // Repivot: if already in focus and the new target is in the same
+        // component, just re-label the banner + pane without re-filtering.
+        if (_relatedFocus.ids && _relatedFocus.ids.has(taskId)) {
+          _relatedFocus.rootId = taskId;
+          _renderRelatedBanner();
+          _renderRelatedPane();
+          _centerGanttOnTask(taskId);
+          return;
+        }
+
+        // Prefer the pristine tasks (always string deps) over _activeSchedule
+        // (which Frappe may have mutated to array deps). parseDeps now accepts
+        // both forms but pristine is cheaper and avoids any surprises.
+        var sourceTasks = (_originalJson && _originalJson.tasks) || _activeSchedule;
+        var ids = window.PPGanttSimulator.taskLineage(sourceTasks, taskId);
+        if (!ids || ids.size === 0) return;
+
+        // Snapshot the dropdown filter so we can restore it on exit.
+        if (_focusFilter.field && _focusFilter.value) {
+          _relatedFocus.suspendedFocusFilter = { field: _focusFilter.field, value: _focusFilter.value };
+          _focusFilter = { field: '', value: '' };
+          _syncFocusValueOptions();
+        }
+
+        _relatedFocus.rootId = taskId;
+        _relatedFocus.ids = ids;
+
+        document.body.classList.add('related-focus-active');
+        _renderRelatedBanner();
+        _renderRelatedPane();
+
+        // Animate unrelated bars fading out in-place BEFORE the re-render.
+        var gantt = document.getElementById('gantt-container');
+        if (gantt) {
+          var wrappers = gantt.querySelectorAll('.bar-wrapper');
+          wrappers.forEach(function (w) {
+            var id = w.getAttribute('data-id');
+            if (id && !_relatedFocus.ids.has(id)) {
+              w.classList.add('is-fading-out');
+              requestAnimationFrame(function () { w.classList.add('faded'); });
+            }
+          });
+          setTimeout(function () {
+            gantt.classList.add('gantt-mounting');
+            _renderActiveSchedule();
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () {
+                gantt.classList.remove('gantt-mounting');
+                _centerGanttOnTask(_relatedFocus.rootId);
+              });
+            });
+          }, 180);
+        } else {
+          _renderActiveSchedule();
+          requestAnimationFrame(function () {
+            _centerGanttOnTask(_relatedFocus.rootId);
+          });
+        }
+      }
+
+      // Scroll both the Gantt-wrapper (our scrollable flex box) AND Frappe's
+      // inner .gantt-container so the named task's bar sits roughly in the
+      // center of the visible viewport. Called after a focus-mode render.
+      function _centerGanttOnTask(taskId) {
+        if (!taskId) return;
+        var gantt = document.getElementById('gantt-container');
+        if (!gantt) return;
+        var wrapper = document.getElementById('gantt-wrapper');
+        var innerScroller = gantt.querySelector('.gantt-container') || gantt;
+
+        var bar = gantt.querySelector('.bar-wrapper[data-id="' + taskId + '"] .bar');
+        if (!bar) return;
+        var barX = parseFloat(bar.getAttribute('x')) || 0;
+        var barW = parseFloat(bar.getAttribute('width')) || 0;
+        var barY = parseFloat(bar.getAttribute('y')) || 0;
+        var barH = parseFloat(bar.getAttribute('height')) || 0;
+
+        // Horizontal centering inside Frappe's inner scroller
+        var innerW = innerScroller.clientWidth || 0;
+        if (innerW > 0) {
+          innerScroller.scrollLeft = Math.max(0, barX + barW / 2 - innerW / 2);
+        }
+
+        // Vertical centering inside our outer wrapper (the flex scroller)
+        if (wrapper) {
+          var wrapperH = wrapper.clientHeight || 0;
+          if (wrapperH > 0) {
+            wrapper.scrollTop = Math.max(0, barY + barH / 2 - wrapperH / 2);
+          }
+        }
+      }
+
+      function _exitRelatedFocus() {
+        if (!_relatedFocus.ids) return;
+        _relatedFocus.rootId = null;
+        _relatedFocus.ids = null;
+        if (_relatedFocus.suspendedFocusFilter) {
+          _focusFilter = _relatedFocus.suspendedFocusFilter;
+          _relatedFocus.suspendedFocusFilter = null;
+          _syncFocusValueOptions();
+        }
+        document.body.classList.remove('related-focus-active');
+        _hideRelatedBanner();
+        _hideRelatedPane();
+
+        var gantt = document.getElementById('gantt-container');
+        if (gantt) {
+          gantt.classList.add('gantt-mounting');
+          _renderActiveSchedule();
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              gantt.classList.remove('gantt-mounting');
+            });
+          });
+        } else {
+          _renderActiveSchedule();
+        }
+      }
+
+      function _renderRelatedBanner() {
+        var banner = document.getElementById('related-banner');
+        var text = document.getElementById('related-banner-text');
+        if (!banner || !text) return;
+        var root = _findTaskInActive(_relatedFocus.rootId);
+        var rootName = (root && root.name) || 'task';
+        var n = _relatedFocus.ids ? _relatedFocus.ids.size : 0;
+        var suspended = _relatedFocus.suspendedFocusFilter;
+        var suspendedNote = '';
+        if (suspended) {
+          suspendedNote = ' · Focus "' + _rfEscHtml(suspended.field) + ' = ' + _rfEscHtml(suspended.value) + '" temporarily suspended';
+        }
+        text.innerHTML = 'Showing the lineage of <strong>' + _rfEscHtml(rootName) + '</strong> — <strong>' + n + '</strong> task' + (n === 1 ? '' : 's') + ' (ancestors + descendants)' + suspendedNote;
+        banner.hidden = false;
+        requestAnimationFrame(function () { banner.classList.add('open'); });
+      }
+
+      function _hideRelatedBanner() {
+        var banner = document.getElementById('related-banner');
+        if (!banner) return;
+        banner.classList.remove('open');
+        setTimeout(function () { banner.hidden = true; }, 220);
+      }
+
+      function _renderRelatedPane() {
+        var pane = document.getElementById('related-pane');
+        var title = document.getElementById('related-pane-title');
+        var count = document.getElementById('related-pane-count');
+        var cards = document.getElementById('related-pane-cards');
+        if (!pane || !cards) return;
+
+        var root = _findTaskInActive(_relatedFocus.rootId);
+        var rootName = (root && root.name) || 'Related tasks';
+        if (title) title.textContent = rootName;
+        if (count) count.textContent = (_relatedFocus.ids ? _relatedFocus.ids.size : 0) + ' tasks';
+
+        // Build the card list, ordered by start date (stable + cycle-safe).
+        var sourceTasks = _activeSchedule || (_originalJson && _originalJson.tasks) || [];
+        var component = sourceTasks.filter(function (t) { return _relatedFocus.ids.has(t.id); });
+        component.sort(function (a, b) {
+          var sa = a.start || '9999';
+          var sb = b.start || '9999';
+          if (sa < sb) return -1;
+          if (sa > sb) return 1;
+          return (a.name || '').localeCompare(b.name || '');
+        });
+
+        var byId = {};
+        component.forEach(function (t) { byId[t.id] = t; });
+
+        function rfParseDeps(s) {
+          if (!s || typeof s !== 'string') return [];
+          return s.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+        }
+        var dependentsOf = {};
+        component.forEach(function (t) { dependentsOf[t.id] = []; });
+        component.forEach(function (t) {
+          rfParseDeps(t.dependencies).forEach(function (pred) {
+            if (dependentsOf[pred]) dependentsOf[pred].push(t.id);
+          });
+        });
+
+        var html = component.map(function (t) {
+          var m = t.meta || {};
+          var isRoot = t.id === _relatedFocus.rootId;
+          var phaseColorVar = m.phase ? ('var(--phase-color-' + _rfPhaseSlug(m.phase) + ', #6B7280)') : '#6B7280';
+          var streamColor = _rfStreamColor(m.stream);
+
+          var milestoneBadge = m.is_milestone ? '<span class="rc-badge rc-milestone">◆ Milestone</span>' : '';
+          var criticalBadge = m.critical_path ? '<span class="rc-badge rc-critical">Critical path</span>' : '';
+          var riskBadge = (m.risk_level && m.risk_level.toLowerCase() !== 'none')
+            ? '<span class="rc-badge rc-risk rc-risk-' + _rfEscHtml(m.risk_level.toLowerCase()) + '">' + _rfEscHtml(m.risk_level) + ' risk</span>'
+            : '';
+
+          var streamChip = m.stream
+            ? '<span class="rc-stream-chip" style="background:' + streamColor + '"></span>' + _rfEscHtml(m.stream)
+            : '<em>—</em>';
+
+          var notionLink = m.notion_url
+            ? '<a class="rc-notion" href="' + _rfEscHtml(m.notion_url) + '" target="_blank" rel="noopener">Open in Notion ↗</a>'
+            : '';
+
+          return (
+            '<div class="related-card' + (isRoot ? ' is-root' : '') + '" data-task-id="' + _rfEscHtml(t.id) + '" style="--rc-phase:' + phaseColorVar + '">' +
+              '<div class="rc-header">' +
+                '<span class="rc-title">' + _rfEscHtml(t.name) + '</span>' +
+                (isRoot ? '<span class="rc-pill">ROOT</span>' : '') +
+              '</div>' +
+              (milestoneBadge || criticalBadge || riskBadge
+                ? '<div class="rc-badges">' + milestoneBadge + criticalBadge + riskBadge + '</div>'
+                : '') +
+              '<div class="rc-meta">' +
+                '<div><span class="rc-label">Phase</span><span class="rc-value">' + _rfEscHtml(m.phase || '—') + '</span></div>' +
+                '<div><span class="rc-label">Stream</span><span class="rc-value">' + streamChip + '</span></div>' +
+                '<div><span class="rc-label">Owner</span><span class="rc-value">' + _rfEscHtml(m.owner || '—') + '</span></div>' +
+                '<div><span class="rc-label">Status</span><span class="rc-value">' + _rfEscHtml(m.status || '—') + '</span></div>' +
+                '<div><span class="rc-label">Dates</span><span class="rc-value">' + _rfEscHtml(t.start) + ' → ' + _rfEscHtml(t.end) + '</span></div>' +
+                '<div><span class="rc-label">Duration</span><span class="rc-value">' + _rfEscHtml(m.duration_text || (m.duration_days != null ? m.duration_days + ' days' : '—')) + '</span></div>' +
+                '<div><span class="rc-label">Slack</span><span class="rc-value">' + (m.slack_days != null ? m.slack_days + 'd' : '—') + '</span></div>' +
+                '<div><span class="rc-label">Progress</span><span class="rc-value">' + (t.progress != null ? t.progress + '%' : '0%') + '</span></div>' +
+              '</div>' +
+              notionLink +
+            '</div>'
+          );
+        }).join('');
+
+        cards.innerHTML = html;
+
+        cards.querySelectorAll('.related-card .rc-title').forEach(function (el) {
+          el.addEventListener('click', function () {
+            var card = el.closest('.related-card');
+            var tid = card && card.getAttribute('data-task-id');
+            if (tid) _enterRelatedFocus(tid);
+          });
+        });
+
+        pane.hidden = false;
+        requestAnimationFrame(function () { pane.classList.add('open'); });
+      }
+
+      function _hideRelatedPane() {
+        var pane = document.getElementById('related-pane');
+        if (!pane) return;
+        pane.classList.remove('open');
+        setTimeout(function () { pane.hidden = true; }, 240);
+      }
+
+      function _rfStreamColor(stream) {
+        if (!stream) return '#6B7280';
+        var key = String(stream).toLowerCase();
+        if (key === 'stream b (peter)') return '#3B82F6';
+        if (key === 'stream a (lourenço)' || key === 'stream a (lourenco)') return '#A855F7';
+        if (key === 'shared') return '#9CA3AF';
+        if (key === 'app store') return '#EAB308';
+        if (key === 'white-label') return '#EC4899';
+        return '#6B7280';
+      }
+
+      function _rfPhaseSlug(name) {
+        return String(name || '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+      }
+
+      function _applyPush(rootTaskId, pushDays, opts) {
         if (!_originalJson || !window.PPGanttSimulator) return;
+        opts = opts || {};
+        var cascadeFromActive = !!opts.cascadeFromActive;
+        var reasonLabel = opts.reasonLabel || 'user push';
         try {
           var currentRootName = (_taskById[rootTaskId] && _taskById[rootTaskId].name) || rootTaskId;
           _simulationHistory.push({
@@ -590,8 +1069,16 @@
             } : null
           });
 
+          // When a drag triggers the cascade, we want it to layer on top of the
+          // already-active schedule (what the user sees). Otherwise (click-to-push
+          // dialog), we cascade against the pristine baseline so consecutive pushes
+          // compose predictably the way the original simulator design intends.
+          var baseline = cascadeFromActive
+            ? _cloneSchedule(_activeSchedule || _originalJson.tasks)
+            : _originalJson.tasks;
+
           var result = window.PPGanttSimulator.simulatePush(
-            _originalJson.tasks,
+            baseline,
             rootTaskId,
             pushDays
           );
@@ -600,6 +1087,8 @@
 
           // Record events in the change log
           if (_changeLog) {
+            // For cascade-from-active the "original" reference is the pristine
+            // JSON so exported diffs always describe Notion-vs-now.
             var rootTask = _taskById[rootTaskId];
             var origRoot = rootTask;
             var newRoot = newSchedule.find(function (t) { return t.id === rootTaskId; });
@@ -610,7 +1099,7 @@
                 (origRoot.meta && origRoot.meta.notion_url) || '',
                 origRoot.start, origRoot.end,
                 newRoot.start, newRoot.end,
-                'user push'
+                reasonLabel
               );
             }
 
@@ -741,7 +1230,7 @@
       async function _exportChanges() {
         _syncChangeLogFromSchedule();
         if (!_changeLog || !_changeLog.hasChanges()) {
-          alert('No simulation changes to export. Click a task to push it first.');
+          alert('No simulation changes to export. Drag a bar or click a task to push it first.');
           return;
         }
         var md = _changeLog.exportMarkdown();
@@ -844,6 +1333,37 @@
         }
         _syncUndoButton();
         _syncAppApi();
+
+        // ─── Related-focus wiring (banner + pane buttons, Escape) ────────
+        var relatedBannerExit = document.getElementById('related-banner-exit');
+        var relatedPaneClose = document.getElementById('related-pane-close');
+        if (relatedBannerExit) relatedBannerExit.addEventListener('click', _exitRelatedFocus);
+        if (relatedPaneClose) relatedPaneClose.addEventListener('click', _exitRelatedFocus);
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && _relatedFocus.ids) {
+            e.preventDefault();
+            _exitRelatedFocus();
+          }
+        });
+
+        // ─── Hamburger toggle for the files sidebar ──────────────────────
+        var hamburger = document.getElementById('sidebar-hamburger');
+        if (hamburger) {
+          hamburger.addEventListener('click', function () {
+            var sidebar = document.getElementById('ppgantt-sidebar');
+            if (!sidebar) return;
+            var isVisible = sidebar.classList.contains('visible');
+            if (isVisible) {
+              sidebar.classList.remove('visible');
+              document.body.classList.remove('overlay-sidebar-open');
+              hamburger.classList.remove('active');
+            } else {
+              sidebar.classList.add('visible');
+              document.body.classList.add('overlay-sidebar-open');
+              hamburger.classList.add('active');
+            }
+          });
+        }
       });
 
       // ─── Data loading strategy ────────────────────────────────────────────
@@ -1245,9 +1765,24 @@
         window.PPGanttLoader.loadManifest().then(function (manifest) {
           _manifestFiles = manifest.files || [];
 
-          // Always show sidebar (even with just 1 file, so user can see what's loaded)
-          _showSidebar();
+          // Sort newest-first by synced_at so the most recent roadmap lives
+          // at the top of the file list. Fixtures (no is_fixture flag) fall
+          // through; real synced files get proper chronological order.
+          _manifestFiles.sort(function (a, b) {
+            var sa = a.synced_at || '';
+            var sb = b.synced_at || '';
+            if (sa < sb) return 1;
+            if (sa > sb) return -1;
+            return 0;
+          });
+
+          // Sidebar starts collapsed — user opens it via the hamburger button.
+          // _buildSidebar still runs so the DOM is ready to reveal on toggle.
           _buildSidebar(_manifestFiles);
+
+          // Show the hamburger toggle button now that there's a manifest.
+          var toggleBtn = document.getElementById('sidebar-hamburger');
+          if (toggleBtn) toggleBtn.style.display = 'flex';
 
         }).catch(function (err) {
           // Manifest load failure is non-fatal — the fixture bootstrap above

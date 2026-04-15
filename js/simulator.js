@@ -63,13 +63,19 @@ function daysBetween(isoA, isoB) {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse the comma-separated dependencies string into an array of trimmed IDs.
+ * Parse the dependencies field into an array of trimmed IDs.
+ * Accepts either a comma-separated string (the JSON-on-disk contract) or
+ * an array (Frappe Gantt mutates dependencies in place during setup_tasks).
  * Returns [] for empty/null/undefined.
- * @param {string|undefined} deps
+ * @param {string|string[]|undefined} deps
  * @returns {string[]}
  */
 function parseDeps(deps) {
-  if (!deps || typeof deps !== 'string') return [];
+  if (!deps) return [];
+  if (Array.isArray(deps)) {
+    return deps.map(s => (typeof s === 'string' ? s.trim() : '')).filter(Boolean);
+  }
+  if (typeof deps !== 'string') return [];
   return deps.split(',').map(s => s.trim()).filter(Boolean);
 }
 
@@ -93,6 +99,72 @@ function buildDependentsMap(tasks) {
     }
   }
   return map;
+}
+
+/**
+ * Directed lineage of a task: its ancestor chain (upstream predecessors,
+ * recursively) PLUS its descendant chain (downstream dependents, recursively),
+ * plus the root itself. Returns a Set<string> of task IDs.
+ *
+ * This is NOT the undirected connected component. On a densely-linked
+ * roadmap the connected component bloats to the entire graph via cousin
+ * bleed — every sibling of every ancestor and every sibling of every
+ * descendant ends up included. Directed lineage gives the user exactly the
+ * tasks that depend on or enable the clicked task, with no sibling noise.
+ *
+ * Used by the shift-click Related-Tasks focus mode in the viewer.
+ *
+ * Cycle-safe (uses a visited set) — does NOT throw on cycles.
+ *
+ * @param {object[]} tasks
+ * @param {string} rootId
+ * @returns {Set<string>}
+ */
+function taskLineage(tasks, rootId) {
+  const dependents = buildDependentsMap(tasks);
+  const byId = new Map();
+  for (const t of tasks) byId.set(t.id, t);
+
+  const seen = new Set();
+  if (!rootId) return seen;
+  seen.add(rootId);
+
+  // Upstream walk: only follow predecessor edges.
+  const upQueue = [rootId];
+  while (upQueue.length > 0) {
+    const id = upQueue.shift();
+    const task = byId.get(id);
+    if (!task) continue;
+    for (const pred of parseDeps(task.dependencies)) {
+      if (!seen.has(pred)) {
+        seen.add(pred);
+        upQueue.push(pred);
+      }
+    }
+  }
+
+  // Downstream walk: only follow dependent edges.
+  const downQueue = [rootId];
+  while (downQueue.length > 0) {
+    const id = downQueue.shift();
+    const downstream = dependents.get(id) || [];
+    for (const dep of downstream) {
+      if (!seen.has(dep)) {
+        seen.add(dep);
+        downQueue.push(dep);
+      }
+    }
+  }
+
+  return seen;
+}
+
+/**
+ * Deprecated alias for taskLineage. Kept temporarily for any stale callers.
+ * @deprecated Use taskLineage instead.
+ */
+function relatedComponent(tasks, rootId) {
+  return taskLineage(tasks, rootId);
 }
 
 /**
@@ -573,6 +645,11 @@ const PPGanttSimulator = {
   loadSimulation,
   resetSimulation,
   openPushDialog,
+  // Public graph helpers (used by viewer's related-focus mode)
+  parseDeps,
+  buildDependentsMap,
+  taskLineage,
+  relatedComponent, // deprecated alias, kept for safety
   // Expose helpers for testing convenience
   _addDays: addDays,
   _daysBetween: daysBetween,

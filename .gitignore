@@ -27,3 +27,11 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Private project data (per-user Notion syncs)
+# These paths live inside the repo for convenience but must never be committed.
+data/roadmap.json
+data/roadmap.js
+data/_schema_cache/
+data/_archived_fixtures/
+logs/sync-history.jsonl
