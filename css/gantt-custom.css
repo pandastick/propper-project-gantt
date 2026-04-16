@@ -304,7 +304,7 @@ body {
 /* Zoom controls */
 #zoom-controls {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -314,6 +314,42 @@ body {
   margin-right: 6px;
 }
 
+/* ── Segmented zoom slider ──────────────────────────────────────────────
+   Wraps Day / Week / Month in a rounded pill so the three buttons read
+   as one control, not three loose items. The active segment animates
+   between positions via the .zoom-btn transition below.
+   ──────────────────────────────────────────────────────────────────── */
+.zoom-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  padding: 3px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 9999px;
+}
+
+.zoom-slider .zoom-btn {
+  padding: 4px 14px;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.zoom-slider .zoom-btn:hover {
+  color: #e2e8f0;
+}
+
+.zoom-slider .zoom-btn.active {
+  background: #3B82F6;
+  color: #fff;
+}
+
+/* Standalone zoom-btn (used by Simplify button, outside the slider) */
 .zoom-btn {
   padding: 4px 12px;
   border-radius: 6px;
@@ -334,10 +370,6 @@ body {
   background: #3B82F6;
   color: #fff;
   border-color: #3B82F6;
-}
-
-#month-layout-btn {
-  margin-left: 8px;
 }
 
 #month-layout-btn:disabled {

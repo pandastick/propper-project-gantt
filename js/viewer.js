@@ -101,9 +101,31 @@
     return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
   }
 
+  // Stream display-order: Peter's primary stream first, then Lourenço,
+  // then shared work, then the release-track lanes. Keeps the chart reading
+  // top-down in a predictable swim-lane layout even without explicit lane
+  // headers. Unknown streams fall to the end (alphabetical after this list).
+  var _STREAM_ORDER = [
+    'stream b (peter)',
+    'stream a (lourenço)',
+    'stream a (lourenco)',
+    'shared',
+    'app store',
+    'white-label'
+  ];
+
+  function _streamSortKey(task) {
+    var s = (task && task.meta && task.meta.stream) || '';
+    var lower = String(s).toLowerCase();
+    var idx = _STREAM_ORDER.indexOf(lower);
+    // Known streams → ordered index. Unknown → sorted alphabetically after.
+    return idx >= 0 ? idx : 100 + lower.charCodeAt(0);
+  }
+
   function _taskSortTuple(task) {
     return [
-      _taskTimeValue(task, 'start'),
+      _streamSortKey(task),           // 1. group by swim lane (stream)
+      _taskTimeValue(task, 'start'),  // 2. within lane, sort by start date
       _taskTimeValue(task, 'end'),
       (task.meta && task.meta.phase) || '',
       task.name || '',
@@ -122,8 +144,19 @@
   }
 
   function _getDisplayTasks(tasks, mode) {
-    if (!_compactMonthLayout || !Array.isArray(tasks)) {
+    if (!Array.isArray(tasks)) {
       return tasks;
+    }
+
+    // Default: flat sort by (stream, start, end, phase, name). Groups all of
+    // one person's work together regardless of dependency chains. Clean,
+    // predictable, matches how teams actually think about swim lanes.
+    //
+    // Simplify mode (_compactMonthLayout=true): run the dependency-aware
+    // topological visitor below, which clusters related work by dependency
+    // chain — useful when the user wants to see critical paths visually.
+    if (!_compactMonthLayout) {
+      return tasks.slice().sort(_compareTasks);
     }
 
     const taskById = new Map();
@@ -138,8 +171,19 @@
       indegreeById.set(task.id, 0);
     });
 
+    // Use simulator's parseDeps so both comma-string and array forms work.
+    // Frappe Gantt mutates task.dependencies from string to array on first render,
+    // but the viewer also runs this code on the fresh pre-render task list where
+    // task.dependencies is still the raw JSON string.
+    const _parseDeps = (window.PPGanttSimulator && window.PPGanttSimulator.parseDeps)
+      || function (d) {
+        if (!d) return [];
+        if (Array.isArray(d)) return d;
+        return String(d).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      };
+
     tasks.forEach(function (task) {
-      (task.dependencies || []).forEach(function (dependencyId) {
+      _parseDeps(task.dependencies).forEach(function (dependencyId) {
         if (!taskById.has(dependencyId)) return;
         dependentsById.get(dependencyId).push(task);
         indegreeById.set(task.id, (indegreeById.get(task.id) || 0) + 1);
@@ -214,7 +258,9 @@
 
       const lineX1 = barX + barW;
       const lineX2 = lineX1 + tailPx;
-      const lineY = barY + barH / 2;
+      // Draw the dashed tail just below the bar's bottom edge so it doesn't
+      // intersect the label text (which sits at the bar's vertical center).
+      const lineY = barY + barH + 2;
 
       // Create SVG <line> in the same namespace
       const ns = 'http://www.w3.org/2000/svg';

@@ -35,3 +35,6 @@ data/roadmap.js
 data/_schema_cache/
 data/_archived_fixtures/
 logs/sync-history.jsonl
+
+# Local Netlify folder
+.netlify

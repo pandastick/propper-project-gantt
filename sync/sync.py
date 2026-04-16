@@ -515,6 +515,12 @@ def sync(notion_url: str, output_name: str = None) -> None:
         print(f"[sync] Normalising rows ...")
         tasks = [_normalise_page(page, mapping, url_to_id, slug) for page in pages]
 
+        # Sort by start date (empty dates sink to the end), with name as a
+        # stable tiebreaker. Viewer also sorts at render time, but having the
+        # on-disk order match means any tool reading the JSON directly gets a
+        # sensible chronological ordering.
+        tasks.sort(key=lambda t: (t.get("start") or "9999-12-31", t.get("name") or ""))
+
         # --- Step 6: Build phase palette ---
         phases_seen = {t["meta"]["phase"] for t in tasks if t["meta"]["phase"]}
         phase_palette, unknown_phases = _build_phase_palette(phases_seen)

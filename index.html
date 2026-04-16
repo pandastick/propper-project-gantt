@@ -208,10 +208,11 @@
     <!-- Zoom level selector -->
     <div id="zoom-controls">
       <label>Zoom:</label>
-      <button class="zoom-btn active" data-mode="Day">Day</button>
-      <button class="zoom-btn" data-mode="Week">Week</button>
-      <button class="zoom-btn" data-mode="Month">Month</button>
-      <button class="zoom-btn" data-mode="Quarter Day">Quarter</button>
+      <div class="zoom-slider" role="radiogroup" aria-label="Zoom level">
+        <button class="zoom-btn" data-mode="Day">Day</button>
+        <button class="zoom-btn active" data-mode="Week">Week</button>
+        <button class="zoom-btn" data-mode="Month">Month</button>
+      </div>
       <button class="zoom-btn" id="month-layout-btn" type="button" title="Reorder rows visually to keep related work and dependency chains closer together">Simplify</button>
     </div>
 
@@ -351,7 +352,7 @@
       var _taskById = {};         // Quick lookup: task.id → task object
       var _activeSchedule = null; // Currently active schedule (original or simulated)
       var _activePushAmounts = null; // Current simulation push amounts
-      var _preferredViewMode = 'Day';
+      var _preferredViewMode = 'Week';
       var _simulationHistory = [];
 
       // ─── UI helpers ───────────────────────────────────────────────────────
