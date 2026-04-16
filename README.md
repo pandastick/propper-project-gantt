@@ -4,6 +4,16 @@ A local-first Gantt chart viewer with slack-aware schedule simulation. Reads a N
 
 **PPGantt shows you what your project *will* take — not what it should have been.**
 
+## New here?
+
+After you clone, open the repo in an AI coding agent (Claude Code, Cursor, Windsurf, Codex) and say:
+
+> "Onboard me onto PPGantt"
+
+The agent will read [`ONBOARDING.md`](ONBOARDING.md), walk you through the demo fixture, help you import your own roadmap (Notion sync, a JSON you already have, or from scratch), and remove the demo once you're ready. Ten minutes, end-to-end.
+
+If you don't use AI agents, the Quick Start below gets you to the demo; after that, see `ONBOARDING.md` for the manual import steps.
+
 ## What It Does
 
 | Capability | What It Looks Like |

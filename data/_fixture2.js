@@ -6,9 +6,10 @@ window.__PPGANTT_DATA__ =
   "source": {
     "notion_url": "https://www.notion.so/fixture/ppgantt-dev-fixture-scenario-b",
     "data_source_id": "collection://fixture-dev-0001",
-    "table_name": "PPGantt Dev Fixture — Shop Launch (+14d)",
+    "table_name": "PPGantt Demo Roadmap — Scenario B +14d (Simulation)",
     "synced_at": "2026-04-09T14:00:00Z",
-    "row_count": 12
+    "row_count": 12,
+    "is_simulation": true
   },
   "schema_mapping": {
     "id_field": "notion_page_id",
@@ -53,7 +54,7 @@ window.__PPGANTT_DATA__ =
         "duration_days": 0.5,
         "duration_text": "4h",
         "reference": "",
-        "notes": "Scenario B: delayed 14 days from baseline.",
+        "notes": "SIMULATION — scenario B of the demo roadmap, delayed 14 days from the baseline (see _fixture.json). Useful for testing overlay mode. Not real data.",
         "notion_url": "https://www.notion.so/fixture/task-001"
       }
     },

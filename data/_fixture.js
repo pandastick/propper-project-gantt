@@ -6,9 +6,10 @@ window.__PPGANTT_DATA__ =
   "source": {
     "notion_url": "https://www.notion.so/fixture/ppgantt-dev-fixture",
     "data_source_id": "collection://fixture-dev-0000",
-    "table_name": "PPGantt Dev Fixture — Shop Launch",
+    "table_name": "PPGantt Demo Roadmap (Simulation)",
     "synced_at": "2026-04-09T13:00:00Z",
-    "row_count": 12
+    "row_count": 12,
+    "is_simulation": true
   },
   "schema_mapping": {
     "id_field": "notion_page_id",
@@ -53,7 +54,7 @@ window.__PPGANTT_DATA__ =
         "duration_days": 0.5,
         "duration_text": "4h",
         "reference": "",
-        "notes": "Day 1 blocker. Review SBOM and patch known CVEs.",
+        "notes": "SIMULATION — this is a demo roadmap shipped with PPGantt to let you explore the tool. To replace with your own project data, see ONBOARDING.md.",
         "notion_url": "https://www.notion.so/fixture/task-001"
       }
     },

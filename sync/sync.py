@@ -29,6 +29,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -558,6 +560,16 @@ def sync(notion_url: str, output_name: str = None) -> None:
         # --- Step 10: Append sync log ---
         _append_sync_log(notion_url, slug, row_count, success=True)
         print(f"[sync] Sync log appended: {SYNC_LOG_PATH}")
+
+        # --- Step 11: Push to shared workspace repo (if configured) ---
+        roadmap_path = os.environ.get("PPGANTT_ROADMAP_PATH")
+        if roadmap_path and slug == "roadmap":
+            try:
+                _push_to_workspace(out_path, roadmap_path)
+            except Exception as ws_err:
+                print(f"[sync] workspace: FAILED — {ws_err}", file=sys.stderr)
+                # Don't abort the whole sync — the local file is already written.
+
         print(f"\n[sync] Done. {row_count} tasks written to data/{slug}.json")
 
     except Exception as e:
@@ -571,6 +583,86 @@ def sync(notion_url: str, output_name: str = None) -> None:
         print(f"\n[sync] ERROR: {e}", file=sys.stderr)
         traceback.print_exc()
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Workspace repo push (optional — driven by PPGANTT_ROADMAP_PATH env var)
+# ---------------------------------------------------------------------------
+
+def _find_git_root(path: Path) -> Path | None:
+    """Walk up from `path` until we hit a directory containing `.git`."""
+    p = path.parent if path.is_file() else path
+    while p != p.parent:
+        if (p / ".git").exists():
+            return p
+        p = p.parent
+    return None
+
+
+def _push_to_workspace(source_path: Path, dest_path_str: str) -> None:
+    """Copy the synced roadmap to a shared workspace repo, commit, and push.
+
+    Dest path is an absolute filesystem path inside a git repo.
+    Aborts with a loud error if the repo's working tree is dirty — we never
+    want to auto-commit someone's in-progress edits along with the sync.
+    """
+    dest = Path(os.path.expanduser(dest_path_str)).resolve()
+    repo_root = _find_git_root(dest)
+    if not repo_root:
+        print(f"[sync] workspace: SKIP — {dest} is not inside a git repo")
+        return
+
+    # Refuse to push if the workspace has other uncommitted changes.
+    status = subprocess.run(
+        ["git", "-C", str(repo_root), "status", "--porcelain"],
+        capture_output=True, text=True, check=True,
+    )
+    # Strip out the dest file itself — we expect that to change.
+    rel = dest.relative_to(repo_root)
+    dirty_lines = [
+        ln for ln in status.stdout.splitlines()
+        if ln.strip() and ln[3:].strip() != str(rel)
+    ]
+    if dirty_lines:
+        print(
+            f"[sync] workspace: ABORT — {repo_root} has uncommitted changes:",
+            file=sys.stderr,
+        )
+        for ln in dirty_lines:
+            print(f"  {ln}", file=sys.stderr)
+        print(
+            "[sync] workspace: commit or stash those changes, then rerun sync.",
+            file=sys.stderr,
+        )
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(source_path, dest)
+
+    subprocess.run(
+        ["git", "-C", str(repo_root), "add", str(rel)],
+        check=True,
+    )
+
+    commit_msg = f"sync: roadmap {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    commit = subprocess.run(
+        ["git", "-C", str(repo_root), "commit", "-m", commit_msg],
+        capture_output=True, text=True,
+    )
+    # "nothing to commit" means the file content didn't change — treat as success.
+    if commit.returncode != 0:
+        if "nothing to commit" in commit.stdout or "nothing to commit" in commit.stderr:
+            print(f"[sync] workspace: no change to push (content identical)")
+            return
+        raise RuntimeError(
+            f"workspace commit failed: {commit.stdout}\n{commit.stderr}"
+        )
+
+    subprocess.run(
+        ["git", "-C", str(repo_root), "push"],
+        check=True,
+    )
+    print(f"[sync] workspace: pushed {rel} to {repo_root.name}")
 
 
 # ---------------------------------------------------------------------------
