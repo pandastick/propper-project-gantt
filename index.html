@@ -175,7 +175,18 @@
     is only activated when ≥2 files are checked simultaneously.
   -->
   <aside id="ppgantt-sidebar">
-    <h3>Files</h3>
+    <div id="sidebar-head">
+      <h3>Files</h3>
+      <button id="sidebar-refresh" type="button" title="Rebuild the manifest from files on disk" aria-label="Refresh manifest">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 3 v4 h-4"/>
+          <path d="M2 13 v-4 h4"/>
+          <path d="M13.5 7 A6 6 0 0 0 3 5.5"/>
+          <path d="M2.5 9 A6 6 0 0 0 13 10.5"/>
+        </svg>
+      </button>
+    </div>
+    <div id="sidebar-toast" hidden></div>
     <div id="file-list">
       <div id="file-list-message">Loading…</div>
     </div>
@@ -1345,6 +1356,57 @@
             _exitRelatedFocus();
           }
         });
+
+        // ─── Refresh-manifest button inside the sidebar ──────────────────
+        // POSTs to /api/refresh-manifest (Express route). On success the
+        // server has rewritten data/_manifest.json on disk, and we re-read
+        // it via loadManifest() to re-render the sidebar cards.
+        var refreshBtn = document.getElementById('sidebar-refresh');
+        var toastEl = document.getElementById('sidebar-toast');
+        function _showToast(msg, isError) {
+          if (!toastEl) return;
+          toastEl.textContent = msg;
+          toastEl.classList.toggle('is-error', !!isError);
+          toastEl.hidden = false;
+          clearTimeout(_showToast._timer);
+          _showToast._timer = setTimeout(function () { toastEl.hidden = true; }, 3000);
+        }
+        function _refreshManifest() {
+          if (!refreshBtn) return;
+          refreshBtn.classList.add('is-spinning');
+          refreshBtn.disabled = true;
+          fetch('/api/refresh-manifest', { method: 'POST' })
+            .then(function (resp) {
+              if (!resp.ok) {
+                return resp.json().then(function (j) { throw new Error(j.error || ('HTTP ' + resp.status)); });
+              }
+              return resp.json();
+            })
+            .then(function (manifest) {
+              var files = (manifest && manifest.files) || [];
+              // Defensive sort — the server already sorts newest-first, but
+              // mirror the guarantee on the client so tests can't get confused.
+              files.sort(function (a, b) {
+                var sa = a.synced_at || '';
+                var sb = b.synced_at || '';
+                if (sa < sb) return 1;
+                if (sa > sb) return -1;
+                return 0;
+              });
+              _manifestFiles = files;
+              if (typeof _buildSidebar === 'function') _buildSidebar(_manifestFiles);
+              _showToast('Manifest refreshed — ' + files.length + ' file' + (files.length === 1 ? '' : 's'));
+            })
+            .catch(function (err) {
+              console.error('[PPGantt] refresh-manifest failed:', err);
+              _showToast('Refresh failed: ' + (err && err.message ? err.message : err), true);
+            })
+            .then(function () {
+              refreshBtn.classList.remove('is-spinning');
+              refreshBtn.disabled = false;
+            });
+        }
+        if (refreshBtn) refreshBtn.addEventListener('click', _refreshManifest);
 
         // ─── Hamburger toggle for the files sidebar ──────────────────────
         var hamburger = document.getElementById('sidebar-hamburger');

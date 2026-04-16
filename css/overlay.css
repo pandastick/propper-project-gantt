@@ -56,9 +56,74 @@ body.overlay-sidebar-open #related-pane {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  margin: 0 0 12px 0;
+  margin: 0;
+  padding: 0;
+}
+
+#sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid #1e293b;
+  margin-bottom: 12px;
+}
+
+#sidebar-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+#sidebar-refresh:hover {
+  background: #334155;
+  color: #f1f5f9;
+  border-color: #475569;
+}
+
+#sidebar-refresh:active {
+  transform: scale(0.92);
+}
+
+#sidebar-refresh.is-spinning svg {
+  animation: ppg-spin 900ms linear infinite;
+}
+
+@keyframes ppg-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+#sidebar-toast {
+  font-size: 10px;
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin-bottom: 8px;
+  line-height: 1.35;
+  transition: opacity 200ms ease;
+}
+
+#sidebar-toast.is-error {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+#sidebar-toast[hidden] {
+  display: none !important;
 }
 
 /* ─── File list container ─────────────────────────────────────────────────── */

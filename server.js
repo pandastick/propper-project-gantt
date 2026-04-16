@@ -46,6 +46,64 @@ app.get("/api/data/:file", (req, res) => {
   res.sendFile(filePath);
 });
 
+// POST /api/refresh-manifest — rebuild _manifest.json from the .json files
+// actually present in DATA_DIR. Sorts newest-first by synced_at (fallback to
+// filesystem mtime). Each entry preserves metadata from the file's own
+// `source` block if present. Invoked by the sidebar's "Refresh" button.
+app.post("/api/refresh-manifest", (req, res) => {
+  try {
+    if (!fs.existsSync(DATA_DIR) || !fs.statSync(DATA_DIR).isDirectory()) {
+      return res.status(500).json({ error: "DATA_DIR does not exist", data_dir: DATA_DIR });
+    }
+
+    const entries = fs
+      .readdirSync(DATA_DIR)
+      .filter((name) => name.endsWith(".json"))
+      .filter((name) => name !== "_manifest.json") // never include the manifest itself
+      .map((filename) => {
+        const filePath = path.join(DATA_DIR, filename);
+        const stat = fs.statSync(filePath);
+        let parsed = null;
+        try {
+          parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        } catch (_) {
+          parsed = null; // malformed JSON — still list the file but with minimal metadata
+        }
+        const src = (parsed && parsed.source) || {};
+        const isFixture = filename.startsWith("_fixture");
+        return {
+          filename,
+          table_name: src.table_name || filename.replace(/\.json$/, ""),
+          notion_url: src.notion_url || "",
+          data_source_id: src.data_source_id || "",
+          synced_at: src.synced_at || stat.mtime.toISOString(),
+          row_count: src.row_count != null ? src.row_count : (Array.isArray(parsed && parsed.tasks) ? parsed.tasks.length : null),
+          is_fixture: isFixture,
+        };
+      });
+
+    // Newest-first by synced_at. Ties broken by filename for deterministic order.
+    entries.sort((a, b) => {
+      if (a.synced_at < b.synced_at) return 1;
+      if (a.synced_at > b.synced_at) return -1;
+      return a.filename.localeCompare(b.filename);
+    });
+
+    const manifest = {
+      version: 1,
+      generated_at: new Date().toISOString(),
+      files: entries,
+    };
+
+    const manifestPath = path.join(DATA_DIR, "_manifest.json");
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+    res.json(manifest);
+  } catch (err) {
+    res.status(500).json({ error: `Refresh failed: ${err.message}` });
+  }
+});
+
 app.listen(PORT, () => {
   const usingCustomDir = !!process.env.DATA_DIR;
   console.log(`\n  PPGantt running at http://localhost:${PORT}`);
