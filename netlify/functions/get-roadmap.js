@@ -87,7 +87,7 @@ exports.handler = async (event, context) => {
       };
     }
 
-    const url = `https://api.github.com/repos/pandastick/ppgantt-data/contents/roadmap/${slug}.json`;
+    const url = `https://api.github.com/repos/pandastick/societist-workspace/contents/roadmap/${slug}.json`;
     const ghRes = await fetch(url, {
       headers: {
         Authorization: `Bearer ${githubToken}`,
