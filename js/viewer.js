@@ -502,19 +502,24 @@
     const svg = _ganttInstance.$svg;
     if (!svg) return;
 
-    const dateLayer = svg.querySelector('.date');
-    const headerRect = svg.querySelector('.grid-header');
-    if (!dateLayer || !headerRect) return;
+    const stickyGroup = svg.querySelector('g.ppgantt-sticky');
+    if (!stickyGroup) return;
 
-    const containerRect = _containerEl.getBoundingClientRect();
+    // Vertical scroll now happens inside #gantt-wrapper (the flex-column
+    // scroller), not on window. Read scrollTop directly rather than deriving
+    // it from containerRect.top — the old math assumed window-level scrolling
+    // which stopped happening when the body got `overflow: hidden` + flex
+    // column in yesterday's layout refactor.
+    const wrapper = document.getElementById('gantt-wrapper');
+    const scrollTop = wrapper ? wrapper.scrollTop : 0;
+
     const headerHeight = (_ganttInstance.options && _ganttInstance.options.header_height) || 50;
     const svgHeight = parseFloat(svg.getAttribute('height')) || svg.getBoundingClientRect().height || 0;
     const maxOffset = Math.max(0, svgHeight - headerHeight - 24);
-    const offset = Math.min(maxOffset, Math.max(0, -containerRect.top));
+    const offset = Math.min(maxOffset, Math.max(0, scrollTop));
     const transform = offset > 0 ? 'translate(0,' + offset + ')' : '';
 
-    headerRect.setAttribute('transform', transform);
-    dateLayer.setAttribute('transform', transform);
+    stickyGroup.setAttribute('transform', transform);
   }
 
   // ─── Popup control: suppress during handle-drag, dismiss on click-away ───
@@ -587,6 +592,41 @@
     };
   }
 
+  // Re-append the grid-header rect and the date-label layer as the LAST
+  // children of the SVG. SVG has no z-index — paint order = DOM order.
+  // Frappe creates layers in order [grid, date, arrow, progress, bar, details]
+  // which means bars paint ON TOP of the date labels. When the date layer is
+  // transformed downward (to stay pinned at the top of the viewport during
+  // vertical scroll), bars that scroll into the same Y range would punch
+  // through the header. Promoting both to the tail of the SVG ensures they
+  // paint last = on top of everything else.
+  function _promoteStickyLayers() {
+    if (!_ganttInstance || !_ganttInstance.$svg) return;
+    const svg = _ganttInstance.$svg;
+    // The header rect lives inside the grid layer group; grab it by its class.
+    const headerRect = svg.querySelector('.grid-header');
+    const dateLayer = svg.querySelector('.date');
+    // Move them into a dedicated sticky wrapper group so transforms apply
+    // cleanly and they paint last (on top of bars). If the group already
+    // exists (e.g. on re-render), reuse it.
+    let stickyGroup = svg.querySelector('g.ppgantt-sticky');
+    if (!stickyGroup) {
+      const ns = 'http://www.w3.org/2000/svg';
+      stickyGroup = document.createElementNS(ns, 'g');
+      stickyGroup.setAttribute('class', 'ppgantt-sticky');
+    }
+    // Append as the last SVG child = painted on top.
+    svg.appendChild(stickyGroup);
+    // Move the header rect and date layer INTO the sticky group so a single
+    // transform on the group pins both together.
+    if (headerRect && headerRect.parentNode !== stickyGroup) {
+      stickyGroup.appendChild(headerRect);
+    }
+    if (dateLayer && dateLayer.parentNode !== stickyGroup) {
+      stickyGroup.appendChild(dateLayer);
+    }
+  }
+
   function _bindStickyTimelineHeader() {
     _clearStickyTimelineBinding();
 
@@ -602,19 +642,24 @@
       });
     };
 
+    // Vertical scroll happens on #gantt-wrapper (the flex-column scroller),
+    // not window. Attach there. Keep window listeners for resize (viewport
+    // size change) and a safety scroll fallback for file:// usage where the
+    // whole page scrolls instead of the wrapper.
+    const wrapper = document.getElementById('gantt-wrapper');
+    if (wrapper) wrapper.addEventListener('scroll', update, { passive: true });
     window.addEventListener('scroll', update, { passive: true });
     window.addEventListener('resize', update);
 
     _stickyTimelineCleanup = function () {
+      if (wrapper) wrapper.removeEventListener('scroll', update);
       window.removeEventListener('scroll', update);
       window.removeEventListener('resize', update);
 
       if (_ganttInstance && _ganttInstance.$svg) {
         const svg = _ganttInstance.$svg;
-        const dateLayer = svg.querySelector('.date');
-        const headerRect = svg.querySelector('.grid-header');
-        if (headerRect) headerRect.removeAttribute('transform');
-        if (dateLayer) dateLayer.removeAttribute('transform');
+        const stickyGroup = svg.querySelector('g.ppgantt-sticky');
+        if (stickyGroup) stickyGroup.removeAttribute('transform');
       }
     };
 
@@ -726,6 +771,7 @@
         _applyStreamStripes();
         _promoteBarLabels();
         _applyLabelContrast();
+        _promoteStickyLayers();
         _bindStickyTimelineHeader();
         _bindPopupControl();
       });
