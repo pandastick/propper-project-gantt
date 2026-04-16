@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PPGantt</title>
 
+  <!-- Auth gate (no-op on /; activates on gated slug routes like /societist).
+       Must load before any other script so the fetch override is installed
+       before the viewer makes data calls. Safe to ship in OSS: only does
+       anything on routes that don't exist in a local dev setup. -->
+  <script src="js/auth-gate.js"></script>
+
   <!-- Vendored Frappe Gantt v0.6.1 (MIT) -->
   <link rel="stylesheet" href="css/frappe-gantt.css">
 

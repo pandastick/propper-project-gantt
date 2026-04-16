@@ -1,0 +1,37 @@
+# Netlify config for the PPGantt hosted instance.
+#
+# Public OSS users: this file is safe to ignore. It only affects deployment
+# to Netlify. The viewer still runs locally via `npm start` regardless.
+#
+# For Netlify-hosted deployments with PIN-gated private slugs, you must set
+# three environment variables in the Netlify dashboard:
+#   - PPGANTT_PINS          base64-encoded JSON map of PIN → {name, slugs}
+#   - GITHUB_DATA_TOKEN     fine-grained PAT for read access to your private data repo
+#   - PPGANTT_JWT_SECRET    32+ random bytes of base64 for signing session cookies
+# See netlify/functions/validate-pin.js and get-roadmap.js for details.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Route each private slug to index.html. The viewer detects the slug from
+# the URL via js/auth-gate.js and fetches the correct roadmap through the
+# Netlify Function. Add more slugs here as needed (e.g. /rvms, /cpu).
+[[redirects]]
+  from = "/societist"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/login"
+  to = "/login.html"
+  status = 200
+
+# Security headers applied to every response
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "interest-cohort=()"
