@@ -13,6 +13,10 @@
 [build]
   publish = "."
   functions = "netlify/functions"
+  # npm install ensures jsonwebtoken (and any future function deps) are
+  # bundled with the Netlify Functions. Without this, the build may skip
+  # dependency installation and the Functions 500 on require().
+  command = "npm install"
 
 # Route each private slug to index.html. The viewer detects the slug from
 # the URL via js/auth-gate.js and fetches the correct roadmap through the
