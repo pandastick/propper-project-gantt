@@ -25,6 +25,7 @@ app.get("/api/manifest", (req, res) => {
   }
   try {
     const data = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    res.set("Cache-Control", "no-store");
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: `Invalid manifest JSON: ${err.message}` });
@@ -43,6 +44,7 @@ app.get("/api/data/:file", (req, res) => {
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: "File not found", requested });
   }
+  res.set("Cache-Control", "no-store");
   res.sendFile(filePath);
 });
 
