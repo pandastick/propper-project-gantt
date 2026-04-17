@@ -365,3 +365,50 @@ body.overlay-sidebar-open #related-pane {
 }
 #crossfade-hud strong { color: #60a5fa; font-weight: 600; }
 #crossfade-hud .sep { color: #475569; margin: 0 4px; }
+#crossfade-hud .hud-hint {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #64748b;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+/* ─── Crossfade slider (toolbar, visible when 2 sub-values picked) ──────── */
+
+#crossfade-slider-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  padding: 3px 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  font-size: 11px;
+  color: #94a3b8;
+}
+#crossfade-slider-wrap[hidden] { display: none; }
+
+.crossfade-slider-label {
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #cbd5e1;
+}
+
+#crossfade-slider {
+  width: 120px;
+  accent-color: #3B82F6;
+  cursor: grab;
+}
+#crossfade-slider:active { cursor: grabbing; }
+
+#crossfade-slider-hint {
+  font-size: 10px;
+  color: #64748b;
+  font-style: italic;
+  border-left: 1px solid #334155;
+  padding-left: 8px;
+  margin-left: 2px;
+}
