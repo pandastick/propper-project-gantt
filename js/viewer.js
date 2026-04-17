@@ -1002,5 +1002,9 @@
     },
     reapplySlackTails: _applySlackTails,
     reapplyStreamStripes: _applyStreamStripes,
+    // Needed by simulator.renderGhosts so it can translate ghost bars back
+    // to the task's pre-simulation x coordinate. Safe to expose — pure read
+    // of Gantt scale, no mutation.
+    daysToPixels: _daysToPixels,
   };
 })(window);

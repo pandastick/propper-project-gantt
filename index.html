@@ -990,15 +990,29 @@
         var clone = _cloneSchedule(_activeSchedule);
         var idx = clone.findIndex(function (t) { return t.id === taskId; });
         if (idx === -1) { _simulationHistory.pop(); return; }
+        var prevStart = clone[idx].start;
         clone[idx].start = newStart;
         clone[idx].end = newEnd;
         _activeSchedule = clone;
+
+        // Track the move as a single-task push so the ghost renderer draws
+        // the before-shadow. Surgical edits don't cascade; only the dragged
+        // task gets recorded. pushDays = signed delta (negative for backward
+        // drags); renderGhosts positions the ghost at current x − dxPixels,
+        // which correctly handles both directions.
+        var pristineTask = _originalJson.tasks.find(function (t) { return t.id === taskId; });
+        var origStart = pristineTask ? pristineTask.start : prevStart;
+        var deltaDays = _daysBetweenIso(origStart, newStart);
+        if (deltaDays !== 0) {
+          if (!_activePushAmounts) _activePushAmounts = new Map();
+          _activePushAmounts.set(taskId, deltaDays);
+        }
 
         // Persist so a reload doesn't lose the drag
         if (window.PPGanttSimulator) {
           window.PPGanttSimulator.saveSimulation({
             pushedTaskId: taskId,
-            pushDays: 0,
+            pushDays: deltaDays,
             newSchedule: _activeSchedule,
             pushAmounts: _activePushAmounts,
             synced_at: _originalJson.source && _originalJson.source.synced_at,
