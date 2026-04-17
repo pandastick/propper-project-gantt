@@ -394,6 +394,16 @@ function renderGhosts(containerEl, originalTasks, newTasks, pushAmounts) {
     }
   }
 
+  // Pixel-per-day scale from the viewer's Gantt instance. Used to translate
+  // each moved task's ghost back by the number of days it was pushed.
+  // Falls back to a reasonable column-width estimate if the helper isn't
+  // exposed (older viewer builds, or tests).
+  const _daysToPixels = (
+    window._ppGanttInternal && typeof window._ppGanttInternal.daysToPixels === 'function'
+  )
+    ? window._ppGanttInternal.daysToPixels
+    : function () { return 0; };
+
   barGroups.forEach(group => {
     const taskId = group.getAttribute('data-id');
     if (!taskId) return;
@@ -401,47 +411,47 @@ function renderGhosts(containerEl, originalTasks, newTasks, pushAmounts) {
     const barRect = group.querySelector('rect.bar');
     if (!barRect) return;
 
-    const origTask = origById.get(taskId);
     const moved = pushAmounts.has(taskId);
     const absorbed = absorbedTasks.has(taskId);
-    const isRoot = pushAmounts.has(taskId) && !Array.from(origById.values())
-      .some(t => parseDeps(t.dependencies).includes(taskId) && pushAmounts.has(t.id) === false);
 
     if (moved) {
-      // Clone the bar rect as a ghost showing original position
+      const days = pushAmounts.get(taskId);
+      const dxPixels = _daysToPixels(days); // forward-move → positive pixels
+      const barX = parseFloat(barRect.getAttribute('x') || '0');
+      const barY = parseFloat(barRect.getAttribute('y') || '0');
+      const barW = parseFloat(barRect.getAttribute('width') || '0');
+      const barH = parseFloat(barRect.getAttribute('height') || '20');
+
+      // Clone the bar and translate back by dxPixels (days × px/day) so
+      // the ghost sits at the task's pre-simulation x. Keep the original
+      // phase color (via cloneNode) — a neutral gray would lose at-a-glance
+      // stream recognition. Low opacity + no stroke = subtle shadow.
       const ghostRect = barRect.cloneNode(true);
       ghostRect.classList.add('ppgantt-ghost');
-      ghostRect.style.opacity = '0.35';
-      ghostRect.style.fill = '#888888';
+      ghostRect.setAttribute('x', String(barX - dxPixels));
+      // Slightly broader vertically to read as a footprint rather than
+      // a double-bar (2px extra top/bottom).
+      ghostRect.setAttribute('y', String(barY - 2));
+      ghostRect.setAttribute('height', String(barH + 4));
+      ghostRect.style.opacity = '0.18';
       ghostRect.style.stroke = 'none';
       ghostRect.style.pointerEvents = 'none';
 
-      // Insert ghost in the same group, behind the real bar
+      // Behind the live bar so the live bar's label stays readable.
       group.insertBefore(ghostRect, group.firstChild);
 
-      // Add "+N days" label next to the new bar position
+      // "+N days" label tucked next to the real bar's right edge. Muted
+      // amber instead of the previous loud orange.
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       label.classList.add('ppgantt-ghost-label');
-      label.setAttribute('x', String(parseFloat(barRect.getAttribute('x') || '0') + parseFloat(barRect.getAttribute('width') || '0') + 6));
-      label.setAttribute('y', String(parseFloat(barRect.getAttribute('y') || '0') + parseFloat(barRect.getAttribute('height') || '20') / 2 + 4));
+      label.setAttribute('x', String(barX + barW + 6));
+      label.setAttribute('y', String(barY + barH / 2 + 4));
       label.setAttribute('font-size', '10');
-      label.setAttribute('fill', '#e65c00');
-      label.setAttribute('font-weight', 'bold');
+      label.setAttribute('fill', '#f59e0b');
+      label.setAttribute('font-weight', '600');
       label.style.pointerEvents = 'none';
-      const days = pushAmounts.get(taskId);
       label.textContent = `+${days} day${days !== 1 ? 's' : ''}`;
       group.appendChild(label);
-
-      // Highlight root task with a thicker border
-      const isRootTask = originalTasks.length > 0 && taskId === originalTasks[0].id ||
-        !Array.from(parseDeps(origById.get(taskId)?.dependencies || '').filter(p => pushAmounts.has(p))).length;
-      // Simpler root detection: root is the task with pushAmount === pushDays (the largest push)
-      // We mark the bar with a class so CSS can style it; also apply inline stroke
-      const maxPush = Math.max(...pushAmounts.values());
-      if (pushAmounts.get(taskId) === maxPush) {
-        barRect.style.strokeWidth = '3';
-        barRect.style.stroke = '#ff4400';
-      }
     }
 
     if (absorbed) {

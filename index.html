@@ -228,6 +228,12 @@
         <option value="critical_path">Critical path only</option>
       </select>
       <div id="focus-values" class="focus-values" hidden></div>
+      <div id="crossfade-slider-wrap" hidden title="Drag to blend between the two selected values — or hold Shift and scroll over the chart">
+        <span id="crossfade-slider-label-a" class="crossfade-slider-label"></span>
+        <input id="crossfade-slider" type="range" min="0" max="100" step="1" value="100" aria-label="Crossfade between selected values">
+        <span id="crossfade-slider-label-b" class="crossfade-slider-label"></span>
+        <span id="crossfade-slider-hint">Shift+scroll</span>
+      </div>
       <button id="clear-focus-btn" type="button" disabled>Clear focus</button>
       <span id="focus-summary"></span>
     </div>
@@ -525,6 +531,7 @@
         });
 
         if (clearBtn) clearBtn.disabled = !field && _focusFilter.values.length === 0;
+        _syncCrossfadeSlider();
       }
 
       function _handleFocusValueToggle(event) {
@@ -548,6 +555,7 @@
         }
         // Reset alpha every time the selection changes. Primary at full.
         _focusFilter.alpha = 1.0;
+        _syncCrossfadeSlider();
         _renderActiveSchedule();
       }
 
@@ -567,7 +575,9 @@
         }
         // Discrete-value fields use the new checkbox-multi path. With 1 or 2
         // values selected, only tasks matching them remain — crossfade opacity
-        // is applied post-render in _applyCrossfadeOpacity().
+        // is applied post-render in _applyCrossfadeOpacity(). Overlay
+        // stacking (pairing A+B on shared rows) is also post-render in
+        // _applyCrossfadeStackedLayout().
         if (_focusFilter.field && _focusFilter.values.length > 0) {
           var valueSet = new Set(_focusFilter.values);
           out = out.filter(function (task) {
@@ -576,6 +586,82 @@
           });
         }
         return out;
+      }
+
+      // Stacked overlay layout for crossfade mode.
+      //
+      // When exactly 2 sub-values are selected, we want paired tasks to share
+      // the same row so they visually superimpose. Pairing is by chronology:
+      // A's earliest start pairs with B's earliest start, etc. Leftovers
+      // (whichever stream has more tasks) render on their own rows below.
+      //
+      // Implementation: translate the B-task's .bar-wrapper <g> to match A's
+      // row Y. CSS transforms on SVG <g> are well-supported; label and any
+      // decorations inside the wrapper follow along. Dependency arrows in
+      // this filtered view are also suppressed (they connect to filtered-out
+      // rows and would draw noise across the overlay).
+      function _applyCrossfadeStackedLayout() {
+        var container = document.getElementById('gantt-container');
+        if (!container) return;
+        var svg = container.querySelector('svg');
+        if (!svg) return;
+
+        // Clear any previous translation first so repeat renders don't double-stack.
+        svg.querySelectorAll('.bar-wrapper').forEach(function (w) {
+          w.style.transform = '';
+          w.style.removeProperty('--pp-cross-translate');
+        });
+
+        if (!_focusFilter.field || _focusFilter.values.length !== 2) {
+          // Also restore arrow visibility if we hid them previously.
+          svg.querySelectorAll('.arrow').forEach(function (a) { a.style.display = ''; });
+          svg.querySelectorAll('.row-line').forEach(function (l) { l.style.display = ''; });
+          return;
+        }
+
+        var field = _focusFilter.field;
+        var secondary = _focusFilter.values[0]; // A (dims as alpha ↑)
+        var primary = _focusFilter.values[1];   // B (brightens as alpha ↑)
+
+        var tsOfStart = function (task) {
+          return task && task.start ? new Date(task.start + 'T00:00:00').getTime() : Number.MAX_SAFE_INTEGER;
+        };
+
+        // Walk bar-wrappers and collect {task, y, wrapper} for each stream.
+        var aEntries = [], bEntries = [];
+        svg.querySelectorAll('.bar-wrapper').forEach(function (wrapper) {
+          var id = wrapper.getAttribute('data-id');
+          var task = _findTaskInActive(id);
+          if (!task) return;
+          var bar = wrapper.querySelector('.bar');
+          if (!bar) return;
+          var y = parseFloat(bar.getAttribute('y')) || 0;
+          var v = _getTaskMetaValue(task, field);
+          var entry = { task: task, wrapper: wrapper, y: y, ts: tsOfStart(task) };
+          if (v === secondary) aEntries.push(entry);
+          else if (v === primary) bEntries.push(entry);
+        });
+
+        aEntries.sort(function (a, b) { return a.ts - b.ts; });
+        bEntries.sort(function (a, b) { return a.ts - b.ts; });
+
+        var pairCount = Math.min(aEntries.length, bEntries.length);
+        for (var i = 0; i < pairCount; i++) {
+          var a = aEntries[i];
+          var b = bEntries[i];
+          var dy = a.y - b.y; // how far to move B up (or down) to land on A
+          if (dy !== 0) {
+            b.wrapper.style.transform = 'translateY(' + dy + 'px)';
+          }
+        }
+
+        // In overlay mode, dependency arrows and row-lines become noise —
+        // arrows connect positions that no longer reflect the overlaid layout,
+        // and row-lines draw through now-empty rows where B used to live.
+        // Hide both. Restored by the early-return branch above when crossfade
+        // is turned off.
+        svg.querySelectorAll('.arrow').forEach(function (a) { a.style.display = 'none'; });
+        svg.querySelectorAll('.row-line').forEach(function (l) { l.style.display = 'none'; });
       }
 
       // Apply per-bar opacity when exactly 2 sub-values are selected.
@@ -614,6 +700,27 @@
         });
       }
 
+      // Keep the toolbar slider in sync with _focusFilter.alpha and the
+      // currently-selected sub-value labels. Hidden unless exactly 2 are
+      // selected. The slider's 0..100 int range maps to alpha in [0,1].
+      function _syncCrossfadeSlider() {
+        var wrap = document.getElementById('crossfade-slider-wrap');
+        var slider = document.getElementById('crossfade-slider');
+        var labelA = document.getElementById('crossfade-slider-label-a');
+        var labelB = document.getElementById('crossfade-slider-label-b');
+        if (!wrap || !slider || !labelA || !labelB) return;
+
+        if (_focusFilter.values.length !== 2) {
+          wrap.hidden = true;
+          return;
+        }
+        wrap.hidden = false;
+        // Left label = secondary (dims as alpha ↑). Right label = primary.
+        labelA.textContent = _focusFilter.values[0];
+        labelB.textContent = _focusFilter.values[1];
+        slider.value = String(Math.round(_focusFilter.alpha * 100));
+      }
+
       // Tiny top-right HUD showing current crossfade percentages. Auto-hides
       // after a short delay so it doesn't persist between scrolls.
       var _crossfadeHudTimer = null;
@@ -630,7 +737,8 @@
         var pPct = Math.round(alpha * 100);
         var sPct = 100 - pPct;
         hud.innerHTML = '<strong>' + primary + '</strong>: ' + pPct + '%  <span class="sep">·</span>  '
-                      + '<strong>' + secondary + '</strong>: ' + sPct + '%';
+                      + '<strong>' + secondary + '</strong>: ' + sPct + '%'
+                      + '<div class="hud-hint">Hold Shift + scroll to blend</div>';
         hud.style.opacity = '1';
         if (_crossfadeHudTimer) clearTimeout(_crossfadeHudTimer);
         _crossfadeHudTimer = setTimeout(function () {
@@ -697,7 +805,15 @@
         }
 
         _updateFocusSummary(filteredSchedule.length, schedule.length);
-        _applyCrossfadeOpacity();
+        // Stacking and opacity both read the rendered DOM — run them after
+        // Frappe's two-frame post-render settle, matching the internal
+        // _runPostRender timing in viewer.js so positions are final.
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            _applyCrossfadeStackedLayout();
+            _applyCrossfadeOpacity();
+          });
+        });
       }
 
       function _resolveInitialFilename() {
@@ -746,6 +862,11 @@
         _taskById = {};
         json.tasks.forEach(function (t) { _taskById[t.id] = t; });
         _syncFocusValueOptions();
+        // Fresh dataset → drop any locked row ordering so the next render
+        // captures a new one based on this dataset's natural sort.
+        if (typeof window.ppGanttClearLockedOrder === 'function') {
+          window.ppGanttClearLockedOrder();
+        }
 
         // Create change log bound to this source
         if (window.PPGanttChangeLog) {
@@ -869,15 +990,29 @@
         var clone = _cloneSchedule(_activeSchedule);
         var idx = clone.findIndex(function (t) { return t.id === taskId; });
         if (idx === -1) { _simulationHistory.pop(); return; }
+        var prevStart = clone[idx].start;
         clone[idx].start = newStart;
         clone[idx].end = newEnd;
         _activeSchedule = clone;
+
+        // Track the move as a single-task push so the ghost renderer draws
+        // the before-shadow. Surgical edits don't cascade; only the dragged
+        // task gets recorded. pushDays = signed delta (negative for backward
+        // drags); renderGhosts positions the ghost at current x − dxPixels,
+        // which correctly handles both directions.
+        var pristineTask = _originalJson.tasks.find(function (t) { return t.id === taskId; });
+        var origStart = pristineTask ? pristineTask.start : prevStart;
+        var deltaDays = _daysBetweenIso(origStart, newStart);
+        if (deltaDays !== 0) {
+          if (!_activePushAmounts) _activePushAmounts = new Map();
+          _activePushAmounts.set(taskId, deltaDays);
+        }
 
         // Persist so a reload doesn't lose the drag
         if (window.PPGanttSimulator) {
           window.PPGanttSimulator.saveSimulation({
             pushedTaskId: taskId,
-            pushDays: 0,
+            pushDays: deltaDays,
             newSchedule: _activeSchedule,
             pushAmounts: _activePushAmounts,
             synced_at: _originalJson.source && _originalJson.source.synced_at,
@@ -1332,6 +1467,12 @@
           _activePushAmounts = null;
           _lastSimulationContext = null;
           _simulationHistory = [];
+          // Reset → tasks go back to their natural, date-sorted positions.
+          // Clear the lock so the next render re-captures a fresh ordinal
+          // from the pristine _originalJson data.
+          if (typeof window.ppGanttClearLockedOrder === 'function') {
+            window.ppGanttClearLockedOrder();
+          }
           _renderActiveSchedule();
         }
         _updateSimStatus();
@@ -1485,19 +1626,45 @@
         _syncAppApi();
 
         // ─── Focus crossfade: Shift+wheel blends the 2 selected sub-values.
-        // Scroll up = primary brighter, secondary dimmer. 5% linear step,
-        // clamped to [0, 1]. No-op when != 2 sub-values selected.
-        var ganttContainerEl = document.getElementById('gantt-container');
-        if (ganttContainerEl) {
-          ganttContainerEl.addEventListener('wheel', function (ev) {
+        // Bound on #gantt-wrapper (not #gantt-container) because the wrapper
+        // is the scroll container — overflow:auto. Attaching on the container
+        // (a child of the scroll-owner) is too late: native scroll already
+        // consumed the event by the time it bubbles. { passive: false } is
+        // required to allow preventDefault on wheel in modern browsers.
+        // Slider is a direct, discoverable alternative to the Shift+scroll
+        // gesture. Dragging it writes alpha and triggers the same repaint.
+        var crossfadeSliderEl = document.getElementById('crossfade-slider');
+        if (crossfadeSliderEl) {
+          crossfadeSliderEl.addEventListener('input', function () {
+            if (!_focusFilter.field || _focusFilter.values.length !== 2) return;
+            var v = parseInt(crossfadeSliderEl.value, 10);
+            if (isNaN(v)) return;
+            _focusFilter.alpha = Math.max(0, Math.min(1, v / 100));
+            _applyCrossfadeOpacity();
+            _showCrossfadeHUD(_focusFilter.alpha);
+          });
+        }
+
+        var ganttWrapperEl = document.getElementById('gantt-wrapper');
+        if (ganttWrapperEl) {
+          ganttWrapperEl.addEventListener('wheel', function (ev) {
             if (!ev.shiftKey) return;
             if (!_focusFilter.field || _focusFilter.values.length !== 2) return;
             ev.preventDefault();
+            ev.stopPropagation();
+            // macOS trackpads reinterpret Shift+vertical-scroll as horizontal:
+            // the browser reports deltaX instead of deltaY when Shift is held.
+            // Read whichever axis is actually moving so scroll works in both
+            // directions on both mice and trackpads. Positive = "forward/down"
+            // (primary brighter), negative = "back/up" (secondary brighter).
+            var delta = ev.deltaY !== 0 ? ev.deltaY : ev.deltaX;
+            if (delta === 0) return;
             var STEP = 0.05;
-            var direction = ev.deltaY > 0 ? -1 : 1;
+            var direction = delta > 0 ? -1 : 1;
             _focusFilter.alpha = Math.max(0, Math.min(1, _focusFilter.alpha + direction * STEP));
             _applyCrossfadeOpacity();
             _showCrossfadeHUD(_focusFilter.alpha);
+            _syncCrossfadeSlider();
           }, { passive: false });
         }
 

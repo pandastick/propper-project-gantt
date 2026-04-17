@@ -92,9 +92,7 @@
 
 .gantt .bar {
   fill-opacity: 0.62;
-  stroke: #000000;
-  stroke-width: 1.5px;
-  stroke-opacity: 1;
+  stroke: none;
 }
 
 .gantt text.bar-label,
