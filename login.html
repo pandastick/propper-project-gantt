@@ -71,17 +71,23 @@
     .brand {
       font-family: var(--display);
       font-weight: 700;
-      font-size: 72px;
+      font-size: 44px;
       line-height: 1;
       letter-spacing: -0.02em;
-      margin: 0 0 8px 0;
+      margin: 0 0 4px 0;
       color: var(--brand);
       user-select: none;
     }
 
-    .brand .p-mirror {
-      display: inline-block;
-      transform: scaleX(-1);
+    .slug {
+      font-family: var(--mono);
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      color: var(--text);
+      opacity: 0.7;
+      margin: 0 0 20px 0;
+      user-select: none;
+      animation: fadeIn 0.4s linear 0.15s both;
     }
 
     .subtitle {
@@ -253,14 +259,15 @@
     }
 
     @media (min-width: 480px) {
-      .brand { font-size: 84px; }
+      .brand { font-size: 52px; }
       .digit { width: 60px; height: 76px; font-size: 30px; }
       .numpad { grid-template-columns: repeat(3, 68px); gap: 10px; }
       .key { width: 68px; height: 60px; font-size: 24px; }
     }
 
     @media (max-height: 640px) {
-      .brand { font-size: 56px; }
+      .brand { font-size: 34px; }
+      .slug { margin-bottom: 14px; }
       .subtitle { margin-bottom: 20px; }
       .digits { margin-bottom: 18px; }
       .digit { height: 60px; font-size: 24px; }
@@ -279,9 +286,8 @@
 </head>
 <body>
   <main class="login-wrap" role="main" aria-label="PPGantt login">
-    <h1 class="brand" aria-label="PPGantt">
-      <span class="p-mirror">P</span><span>P</span>
-    </h1>
+    <h1 class="brand" aria-label="PPGantt">PPGantt</h1>
+    <p class="slug" id="slug-label">/societist</p>
     <p class="subtitle">Enter access code</p>
 
     <div class="digits" id="digits" role="group" aria-label="Four digit access code">
@@ -322,6 +328,17 @@
       var numpadEl = document.getElementById('numpad');
       var numpadButtons = Array.prototype.slice.call(numpadEl.querySelectorAll('.key'));
       var enterBtn = numpadEl.querySelector('[data-action="enter"]');
+      var slugLabelEl = document.getElementById('slug-label');
+
+      (function setSlugLabel() {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          var r = params.get('redirect');
+          if (r && /^\/[a-z0-9-]+$/.test(r)) {
+            slugLabelEl.textContent = r;
+          }
+        } catch (e) {}
+      })();
 
       var loading = false;
 
