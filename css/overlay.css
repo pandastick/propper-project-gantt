@@ -307,3 +307,61 @@ body.overlay-sidebar-open #related-pane {
   font-style: italic;
   padding: 4px 0;
 }
+
+/* ─── Focus sub-value crossfade: checkbox group + HUD ─────────────────────── */
+
+#focus-values.focus-values {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-left: 4px;
+}
+#focus-values[hidden] { display: none; }
+
+.focus-value-checkbox {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 3px 8px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #1e293b;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.focus-value-checkbox:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+.focus-value-checkbox:has(input:checked) {
+  background: #3B82F6;
+  color: #fff;
+  border-color: #3B82F6;
+}
+.focus-value-checkbox input[type="checkbox"] {
+  accent-color: #3B82F6;
+  margin: 0;
+}
+
+#crossfade-hud {
+  position: fixed;
+  top: 64px;
+  right: 20px;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 1000;
+}
+#crossfade-hud strong { color: #60a5fa; font-weight: 600; }
+#crossfade-hud .sep { color: #475569; margin: 0 4px; }

@@ -227,9 +227,7 @@
         <option value="is_milestone">Milestone only</option>
         <option value="critical_path">Critical path only</option>
       </select>
-      <select id="focus-value" disabled>
-        <option value="">All values</option>
-      </select>
+      <div id="focus-values" class="focus-values" hidden></div>
       <button id="clear-focus-btn" type="button" disabled>Clear focus</button>
       <span id="focus-summary"></span>
     </div>
@@ -336,7 +334,11 @@
       'use strict';
 
       var DEFAULT_FILENAME = '_fixture.json';
-      var _focusFilter = { field: '', value: '' };
+      // _focusFilter.value is kept for backwards-compat with related-focus
+      // suspend/restore. values is the new crossfade array (max 2). alpha is
+      // the linear blend in [0,1]: last-added sub-value (primary) = alpha,
+      // first-added (secondary) = 1 - alpha.
+      var _focusFilter = { field: '', value: '', values: [], alpha: 1.0 };
 
       // Related-Tasks focus mode (shift-click a bar to enter).
       //   rootId: id of the task the focus was pivoted on
@@ -477,33 +479,76 @@
       }
 
       function _syncFocusValueOptions() {
-        var valueSelect = document.getElementById('focus-value');
+        var container = document.getElementById('focus-values');
         var clearBtn = document.getElementById('clear-focus-btn');
-        var options = _getFocusOptions(_focusFilter.field);
-        if (!valueSelect) return;
+        if (!container) return;
 
-        valueSelect.innerHTML = '';
-        var base = document.createElement('option');
-        base.value = '';
-        base.textContent = _focusFilter.field ? 'All values' : 'All values';
-        valueSelect.appendChild(base);
+        var field = _focusFilter.field;
+        container.innerHTML = '';
 
-        options.forEach(function (option) {
-          var el = document.createElement('option');
-          el.value = option.value;
-          el.textContent = option.label;
-          valueSelect.appendChild(el);
-        });
-
-        if (_focusFilter.value && options.some(function (option) { return option.value === _focusFilter.value; })) {
-          valueSelect.value = _focusFilter.value;
-        } else {
-          _focusFilter.value = '';
-          valueSelect.value = '';
+        // is_milestone / critical_path are boolean filters — no sub-value UI.
+        if (!field || field === 'is_milestone' || field === 'critical_path') {
+          container.hidden = true;
+          _focusFilter.values = [];
+          if (clearBtn) clearBtn.disabled = !field && !_focusFilter.value && _focusFilter.values.length === 0;
+          return;
         }
 
-        valueSelect.disabled = !_focusFilter.field || options.length === 0;
-        if (clearBtn) clearBtn.disabled = !_focusFilter.field && !_focusFilter.value;
+        var options = _getFocusOptions(field);
+        if (!options.length) {
+          container.hidden = true;
+          _focusFilter.values = [];
+          if (clearBtn) clearBtn.disabled = true;
+          return;
+        }
+
+        container.hidden = false;
+
+        // Prune stale selections that no longer exist in the new field's values.
+        var validSet = new Set(options.map(function (o) { return o.value; }));
+        _focusFilter.values = _focusFilter.values.filter(function (v) { return validSet.has(v); });
+
+        options.forEach(function (option) {
+          var label = document.createElement('label');
+          label.className = 'focus-value-checkbox';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.value = option.value;
+          cb.dataset.field = field;
+          cb.checked = _focusFilter.values.indexOf(option.value) !== -1;
+          cb.addEventListener('change', _handleFocusValueToggle);
+          var span = document.createElement('span');
+          span.textContent = option.label;
+          label.appendChild(cb);
+          label.appendChild(span);
+          container.appendChild(label);
+        });
+
+        if (clearBtn) clearBtn.disabled = !field && _focusFilter.values.length === 0;
+      }
+
+      function _handleFocusValueToggle(event) {
+        var cb = event.target;
+        var value = cb.value;
+        if (cb.checked) {
+          // Max 2 active. Dropping the oldest (primary, index 0) makes room
+          // for the newly-checked value. The existing secondary stays put and
+          // becomes the new primary only if the user re-scrolls; see
+          // _applyCrossfadeOpacity for the primary/secondary mapping.
+          if (_focusFilter.values.length >= 2) {
+            var dropped = _focusFilter.values.shift();
+            var droppedCb = document.querySelector(
+              '#focus-values input[type="checkbox"][value="' + CSS.escape(dropped) + '"]'
+            );
+            if (droppedCb) droppedCb.checked = false;
+          }
+          _focusFilter.values.push(value);
+        } else {
+          _focusFilter.values = _focusFilter.values.filter(function (v) { return v !== value; });
+        }
+        // Reset alpha every time the selection changes. Primary at full.
+        _focusFilter.alpha = 1.0;
+        _renderActiveSchedule();
       }
 
       function _filterTasks(tasks) {
@@ -513,25 +558,98 @@
         if (_relatedFocus.ids) {
           return out.filter(function (task) { return _relatedFocus.ids.has(task.id); });
         }
+        // Boolean focus fields (is_milestone, critical_path) are filters, not
+        // sub-value groupings — use _focusFilter.value as before.
         if (_focusFilter.field && _focusFilter.value) {
           out = out.filter(function (task) {
             return _getTaskMetaValue(task, _focusFilter.field) === _focusFilter.value;
           });
         }
+        // Discrete-value fields use the new checkbox-multi path. With 1 or 2
+        // values selected, only tasks matching them remain — crossfade opacity
+        // is applied post-render in _applyCrossfadeOpacity().
+        if (_focusFilter.field && _focusFilter.values.length > 0) {
+          var valueSet = new Set(_focusFilter.values);
+          out = out.filter(function (task) {
+            var v = _getTaskMetaValue(task, _focusFilter.field);
+            return valueSet.has(v);
+          });
+        }
         return out;
+      }
+
+      // Apply per-bar opacity when exactly 2 sub-values are selected.
+      // With 1 selected: full opacity (filter already hid the rest).
+      // With 2 selected: last-added = primary (alpha), first-added = secondary (1-alpha).
+      function _applyCrossfadeOpacity() {
+        var container = document.getElementById('gantt-container');
+        if (!container) return;
+        var wrappers = container.querySelectorAll('.bar-wrapper');
+
+        if (!_focusFilter.field || _focusFilter.values.length !== 2) {
+          wrappers.forEach(function (w) { w.style.opacity = ''; });
+          return;
+        }
+
+        var secondary = _focusFilter.values[0]; // first-added, dims as alpha ↑
+        var primary = _focusFilter.values[1];   // last-added, brightens as alpha ↑
+        var alpha = _focusFilter.alpha;
+        var primaryOpacity = alpha;
+        var secondaryOpacity = 1 - alpha;
+
+        wrappers.forEach(function (wrapper) {
+          var id = wrapper.getAttribute('data-id');
+          var task = _findTaskInActive(id);
+          if (!task) return;
+          var v = _getTaskMetaValue(task, _focusFilter.field);
+          if (v === primary) {
+            wrapper.style.opacity = primaryOpacity.toFixed(3);
+          } else if (v === secondary) {
+            wrapper.style.opacity = secondaryOpacity.toFixed(3);
+          } else {
+            // Shouldn't reach here — _filterTasks already removed these —
+            // but belt-and-suspenders in case a future code path bypasses it.
+            wrapper.style.opacity = '0';
+          }
+        });
+      }
+
+      // Tiny top-right HUD showing current crossfade percentages. Auto-hides
+      // after a short delay so it doesn't persist between scrolls.
+      var _crossfadeHudTimer = null;
+      function _showCrossfadeHUD(alpha) {
+        if (_focusFilter.values.length !== 2) return;
+        var hud = document.getElementById('crossfade-hud');
+        if (!hud) {
+          hud = document.createElement('div');
+          hud.id = 'crossfade-hud';
+          document.body.appendChild(hud);
+        }
+        var secondary = _focusFilter.values[0];
+        var primary = _focusFilter.values[1];
+        var pPct = Math.round(alpha * 100);
+        var sPct = 100 - pPct;
+        hud.innerHTML = '<strong>' + primary + '</strong>: ' + pPct + '%  <span class="sep">·</span>  '
+                      + '<strong>' + secondary + '</strong>: ' + sPct + '%';
+        hud.style.opacity = '1';
+        if (_crossfadeHudTimer) clearTimeout(_crossfadeHudTimer);
+        _crossfadeHudTimer = setTimeout(function () {
+          hud.style.opacity = '0';
+        }, 1200);
       }
 
       function _updateFocusSummary(visibleCount, totalCount) {
         var summary = document.getElementById('focus-summary');
         var clearBtn = document.getElementById('clear-focus-btn');
+        var hasFocusActive = _focusFilter.field && (_focusFilter.value || _focusFilter.values.length > 0);
         if (summary) {
-          if (_focusFilter.field && _focusFilter.value) {
+          if (hasFocusActive) {
             summary.textContent = visibleCount + ' of ' + totalCount + ' tasks';
           } else {
             summary.textContent = totalCount ? totalCount + ' tasks' : '';
           }
         }
-        if (clearBtn) clearBtn.disabled = !_focusFilter.field && !_focusFilter.value;
+        if (clearBtn) clearBtn.disabled = !hasFocusActive;
       }
 
       function _renderActiveSchedule() {
@@ -579,6 +697,7 @@
         }
 
         _updateFocusSummary(filteredSchedule.length, schedule.length);
+        _applyCrossfadeOpacity();
       }
 
       function _resolveInitialFilename() {
@@ -824,10 +943,18 @@
         var ids = window.PPGanttSimulator.taskLineage(sourceTasks, taskId);
         if (!ids || ids.size === 0) return;
 
-        // Snapshot the dropdown filter so we can restore it on exit.
-        if (_focusFilter.field && _focusFilter.value) {
-          _relatedFocus.suspendedFocusFilter = { field: _focusFilter.field, value: _focusFilter.value };
-          _focusFilter = { field: '', value: '' };
+        // Snapshot the dropdown filter so we can restore it on exit. Covers
+        // both the legacy .value (boolean fields) and the new .values/.alpha
+        // crossfade state — otherwise entering related-focus would silently
+        // discard whatever sub-values the user had blended.
+        if (_focusFilter.field && (_focusFilter.value || _focusFilter.values.length > 0)) {
+          _relatedFocus.suspendedFocusFilter = {
+            field: _focusFilter.field,
+            value: _focusFilter.value,
+            values: _focusFilter.values.slice(),
+            alpha: _focusFilter.alpha
+          };
+          _focusFilter = { field: '', value: '', values: [], alpha: 1.0 };
           _syncFocusValueOptions();
         }
 
@@ -904,7 +1031,13 @@
         _relatedFocus.rootId = null;
         _relatedFocus.ids = null;
         if (_relatedFocus.suspendedFocusFilter) {
-          _focusFilter = _relatedFocus.suspendedFocusFilter;
+          var s = _relatedFocus.suspendedFocusFilter;
+          _focusFilter = {
+            field: s.field || '',
+            value: s.value || '',
+            values: Array.isArray(s.values) ? s.values.slice() : [],
+            alpha: typeof s.alpha === 'number' ? s.alpha : 1.0
+          };
           _relatedFocus.suspendedFocusFilter = null;
           _syncFocusValueOptions();
         }
@@ -936,7 +1069,9 @@
         var suspended = _relatedFocus.suspendedFocusFilter;
         var suspendedNote = '';
         if (suspended) {
-          suspendedNote = ' · Focus "' + _rfEscHtml(suspended.field) + ' = ' + _rfEscHtml(suspended.value) + '" temporarily suspended';
+          var suspLabel = suspended.value
+            || (suspended.values && suspended.values.length ? suspended.values.join(' + ') : '');
+          suspendedNote = ' · Focus "' + _rfEscHtml(suspended.field) + ' = ' + _rfEscHtml(suspLabel) + '" temporarily suspended';
         }
         text.innerHTML = 'Showing the lineage of <strong>' + _rfEscHtml(rootName) + '</strong> — <strong>' + n + '</strong> task' + (n === 1 ? '' : 's') + ' (ancestors + descendants)' + suspendedNote;
         banner.hidden = false;
@@ -1287,7 +1422,6 @@
         var exportStatus = document.getElementById('export-fallback-status');
         var monthLayoutBtn = document.getElementById('month-layout-btn');
         var focusField = document.getElementById('focus-field');
-        var focusValue = document.getElementById('focus-value');
         var clearFocusBtn = document.getElementById('clear-focus-btn');
         if (undoBtn) undoBtn.addEventListener('click', _undoSimulation);
         if (resetBtn) resetBtn.addEventListener('click', _resetSimulation);
@@ -1305,20 +1439,18 @@
           focusField.addEventListener('change', function () {
             _focusFilter.field = focusField.value || '';
             _focusFilter.value = '';
+            _focusFilter.values = [];
+            _focusFilter.alpha = 1.0;
             _syncFocusValueOptions();
             _renderActiveSchedule();
           });
         }
-        if (focusValue) {
-          focusValue.addEventListener('change', function () {
-            _focusFilter.value = focusValue.value || '';
-            _renderActiveSchedule();
-          });
-        }
-        if (clearFocusBtn && focusField && focusValue) {
+        if (clearFocusBtn && focusField) {
           clearFocusBtn.addEventListener('click', function () {
             _focusFilter.field = '';
             _focusFilter.value = '';
+            _focusFilter.values = [];
+            _focusFilter.alpha = 1.0;
             focusField.value = '';
             _syncFocusValueOptions();
             _renderActiveSchedule();
@@ -1351,6 +1483,23 @@
         }
         _syncUndoButton();
         _syncAppApi();
+
+        // ─── Focus crossfade: Shift+wheel blends the 2 selected sub-values.
+        // Scroll up = primary brighter, secondary dimmer. 5% linear step,
+        // clamped to [0, 1]. No-op when != 2 sub-values selected.
+        var ganttContainerEl = document.getElementById('gantt-container');
+        if (ganttContainerEl) {
+          ganttContainerEl.addEventListener('wheel', function (ev) {
+            if (!ev.shiftKey) return;
+            if (!_focusFilter.field || _focusFilter.values.length !== 2) return;
+            ev.preventDefault();
+            var STEP = 0.05;
+            var direction = ev.deltaY > 0 ? -1 : 1;
+            _focusFilter.alpha = Math.max(0, Math.min(1, _focusFilter.alpha + direction * STEP));
+            _applyCrossfadeOpacity();
+            _showCrossfadeHUD(_focusFilter.alpha);
+          }, { passive: false });
+        }
 
         // ─── Related-focus wiring (banner + pane buttons, Escape) ────────
         var relatedBannerExit = document.getElementById('related-banner-exit');
