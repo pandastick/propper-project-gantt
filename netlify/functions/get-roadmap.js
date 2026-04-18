@@ -151,6 +151,7 @@ function assembleResponse(project, mappingRow, phases, streams, tasks, deps, lat
         reference: t.reference || null,
         notes: t.notes || null,
         notion_url: t.notion_url || '',
+        notion_page_id: t.notion_page_id || null,
         notion_sync_status: t.notion_sync_status || 'clean',
       },
     };

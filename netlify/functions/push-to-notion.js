@@ -340,6 +340,24 @@ exports.handler = async (event) => {
     const slug = body.slug;
     const rawProjectId = body.project_id;
 
+    // Optional filter: restrict this push to a specific chunk of Notion page IDs.
+    // Used by the client-side chunked-push loop to stay under Lambda's 30s timeout
+    // on large pushes without losing data fidelity (we never fudge timestamps).
+    // Shape: ["<uuid>", "<uuid>", ...].  Omitted → push everything pushable.
+    let notionPageIdFilter = null;
+    if (Array.isArray(body.notion_page_ids)) {
+      const ids = body.notion_page_ids.filter(
+        (x) => typeof x === 'string' && UUID_PATTERN.test(x),
+      );
+      if (ids.length === 0) {
+        return {
+          statusCode: 400,
+          body: JSON.stringify({ error: 'notion_page_ids, if provided, must be a non-empty array of UUIDs' }),
+        };
+      }
+      notionPageIdFilter = ids;
+    }
+
     let projectId = null;
     if (rawProjectId && typeof rawProjectId === 'string' && UUID_PATTERN.test(rawProjectId)) {
       projectId = rawProjectId;
@@ -379,7 +397,17 @@ exports.handler = async (event) => {
       ),
       sbSelect(
         supabaseUrl, accessToken, anonKey, 'ppgantt',
-        `tasks?select=id,notion_page_id,start_date,end_date,notion_sync_status&project_id=eq.${projectId}&notion_sync_status=in.(clean,local_ahead)`,
+        (() => {
+          let q =
+            `tasks?select=id,notion_page_id,start_date,end_date,notion_sync_status` +
+            `&project_id=eq.${projectId}` +
+            `&notion_sync_status=in.(clean,local_ahead)`;
+          if (notionPageIdFilter && notionPageIdFilter.length > 0) {
+            // PostgREST `in.(...)` accepts comma-joined values; UUIDs are URL-safe.
+            q += `&notion_page_id=in.(${notionPageIdFilter.join(',')})`;
+          }
+          return q;
+        })(),
       ),
     ]);
 

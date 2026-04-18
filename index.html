@@ -1790,6 +1790,12 @@
         }
       }
 
+      // Chunk size for the push loop.  At ~3 req/sec to Notion + read-back
+      // verification + Supabase UPDATE, realistic per-row is ~600ms.  20 rows
+      // is well under the 30s Lambda budget with a generous safety margin,
+      // and keeps progress feedback meaningful ("Pushing 20/69...").
+      var _PPG_PUSH_CHUNK_SIZE = 20;
+
       async function _pushToNotion() {
         var btn = document.getElementById('push-to-notion-btn');
         var slug = window.__PPGANTT_SLUG__;
@@ -1797,41 +1803,81 @@
           alert('Push to Notion is only available on gated team routes (e.g. /societist). Use "Export changes" for the clipboard workflow instead.');
           return;
         }
-        var pushable = _ppgCountPushable(_originalJson);
+        // Build the full list of pushable notion_page_ids upfront so we can
+        // slice into chunks that the server will push deterministically.
+        // Pushable = notion_sync_status IN ('clean', 'local_ahead').  Without
+        // an explicit id list the server picks its own "first N pushable",
+        // which would re-push the same rows every chunk.
+        var tasks = (_originalJson && _originalJson.tasks) || [];
+        var pushableIds = [];
+        for (var i = 0; i < tasks.length; i++) {
+          var meta = tasks[i] && tasks[i].meta;
+          var status = meta && meta.notion_sync_status;
+          var nid = meta && meta.notion_page_id;
+          if (!nid) continue;
+          if (status === 'clean' || status === 'local_ahead' || !status) {
+            pushableIds.push(nid);
+          }
+        }
+        var pushable = pushableIds.length;
         if (pushable === 0) {
           _ppgToast('No clean or local-ahead tasks to push.', 'error');
           return;
         }
-        if (!confirm('Push ' + pushable + ' change' + (pushable === 1 ? '' : 's') + ' to Notion?')) {
+        var chunkCount = Math.ceil(pushable / _PPG_PUSH_CHUNK_SIZE);
+        var prompt =
+          'Push ' + pushable + ' change' + (pushable === 1 ? '' : 's') + ' to Notion?';
+        if (chunkCount > 1) {
+          prompt += ' (will run in ' + chunkCount + ' batches of up to ' + _PPG_PUSH_CHUNK_SIZE + ')';
+        }
+        if (!confirm(prompt)) {
           return;
         }
         _ppgSetBusy(btn, true, 'Pushing...');
+        var totalVerified = 0;
+        var totalFailed = 0;
+        var failureMessages = [];
         try {
-          var res = await fetch('/.netlify/functions/push-to-notion', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ slug: slug }),
-          });
-          var data = null;
-          try { data = await res.json(); } catch (_) { /* non-JSON */ }
-          if (!res.ok) {
-            var msg = (data && data.error) || ('HTTP ' + res.status);
-            _ppgToast('Push failed: ' + msg, 'error');
-            return;
+          for (var chunkIdx = 0; chunkIdx < chunkCount; chunkIdx++) {
+            var start = chunkIdx * _PPG_PUSH_CHUNK_SIZE;
+            var end = Math.min(start + _PPG_PUSH_CHUNK_SIZE, pushable);
+            var chunkIds = pushableIds.slice(start, end);
+            _ppgSetBusy(btn, true, 'Pushing ' + end + '/' + pushable + '...');
+            var res = await fetch('/.netlify/functions/push-to-notion', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ slug: slug, notion_page_ids: chunkIds }),
+            });
+            var data = null;
+            try { data = await res.json(); } catch (_) { /* non-JSON */ }
+            if (!res.ok) {
+              var msg = (data && data.error) || ('HTTP ' + res.status);
+              failureMessages.push('Batch ' + (chunkIdx + 1) + ': ' + msg);
+              totalFailed += chunkIds.length;
+              // Don't abort — later batches may still succeed.  We report
+              // per-batch failures in the summary toast.
+              continue;
+            }
+            var verified = data.verifiedCount != null ? data.verifiedCount : (data.rowsWritten || 0);
+            var failed = data.failedCount != null ? data.failedCount : (data.rowsFailed || 0);
+            totalVerified += verified;
+            totalFailed += failed;
           }
           try { await _ppgReloadData(); }
           catch (reloadErr) { console.warn('[PPGantt] push succeeded but reload failed:', reloadErr); }
-          var verified = data.verifiedCount != null ? data.verifiedCount : (data.rowsWritten || 0);
-          var failed = data.failedCount != null ? data.failedCount : (data.rowsFailed || 0);
-          var summary = 'Pushed ' + verified + ' task' + (verified === 1 ? '' : 's');
-          if (failed > 0) summary += ' \u00B7 ' + failed + ' failed';
-          _ppgToast(summary, failed > 0 ? 'error' : 'success');
+          var summary = 'Pushed ' + totalVerified + ' task' + (totalVerified === 1 ? '' : 's');
+          if (totalFailed > 0) summary += ' \u00B7 ' + totalFailed + ' failed';
+          _ppgToast(summary, totalFailed > 0 ? 'error' : 'success');
+          if (failureMessages.length > 0) {
+            console.warn('[PPGantt] push batch failures:', failureMessages);
+          }
           // The old flow cleared the local simulation change log after a
           // successful push. Preserve that behaviour — the server has
           // accepted these edits, so any queued client-side changes are now
-          // moot. Only clear if the push was fully successful.
-          if (failed === 0 && _changeLog && _changeLog.hasChanges && _changeLog.hasChanges()) {
+          // moot. Only clear if the push was fully successful across ALL
+          // chunks (zero failures).
+          if (totalFailed === 0 && _changeLog && _changeLog.hasChanges && _changeLog.hasChanges()) {
             try { _changeLog.replaceEvents([]); } catch (_) { /* ignore */ }
             _updateSimStatus();
           }
