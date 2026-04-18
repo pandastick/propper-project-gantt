@@ -1874,21 +1874,27 @@
         if (resetBtn) resetBtn.addEventListener('click', _resetSimulation);
         if (exportBtn) exportBtn.addEventListener('click', _exportChanges);
         var pushBtn = document.getElementById('push-to-notion-btn');
-        if (pushBtn) {
-          if (window.__PPGANTT_SLUG__) {
+        var pullBtn = document.getElementById('pull-from-notion-btn');
+        // Enable Pull/Push only on gated slug routes (where __PPGANTT_SLUG__
+        // is set by supabase-gate.js).  Because the gate is a module script
+        // and runs async AFTER this DOMContentLoaded listener fires, we
+        // both (a) check once now (in case the gate already ran) and
+        // (b) re-check when the gate dispatches ppgantt:slug-ready.
+        function _syncSlugButtons() {
+          if (!window.__PPGANTT_SLUG__) return;
+          if (pushBtn) {
             pushBtn.disabled = false;
             pushBtn.title = 'Write changes directly to the Notion roadmap (stamps Last Updated By + Last Sync)';
           }
-          pushBtn.addEventListener('click', _pushToNotion);
-        }
-        var pullBtn = document.getElementById('pull-from-notion-btn');
-        if (pullBtn) {
-          if (window.__PPGANTT_SLUG__) {
+          if (pullBtn) {
             pullBtn.disabled = false;
             pullBtn.title = 'Pull the latest Notion state into Supabase and refresh the viewer';
           }
-          pullBtn.addEventListener('click', _pullFromNotion);
         }
+        _syncSlugButtons();
+        document.addEventListener('ppgantt:slug-ready', _syncSlugButtons);
+        if (pushBtn) pushBtn.addEventListener('click', _pushToNotion);
+        if (pullBtn) pullBtn.addEventListener('click', _pullFromNotion);
         if (monthLayoutBtn) {
           monthLayoutBtn.addEventListener('click', function () {
             if (monthLayoutBtn.disabled) return;

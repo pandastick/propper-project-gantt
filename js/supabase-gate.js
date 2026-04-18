@@ -61,6 +61,19 @@ function installGate({ supabase, win }) {
   const slug = path.replace(/\/$/, '').slice(1);
   win.__PPGANTT_SLUG__ = slug;
 
+  // Module scripts run async after DOMContentLoaded, so handlers wired up
+  // in index.html's DOMContentLoaded listener have already run and seen
+  // __PPGANTT_SLUG__ as undefined. Fire a custom event so those handlers
+  // can re-evaluate any slug-dependent UI state (e.g. enable Pull / Push
+  // buttons).  Dispatched on both document and window for convenience.
+  try {
+    const detail = { slug };
+    document.dispatchEvent(new CustomEvent('ppgantt:slug-ready', { detail }));
+    win.dispatchEvent(new CustomEvent('ppgantt:slug-ready', { detail }));
+  } catch (_) {
+    // CustomEvent unavailable in some test environments; harmless no-op.
+  }
+
   const sessionPromise = supabase.auth.getSession().then(({ data }) => {
     const session = data && data.session;
     if (!session) {
