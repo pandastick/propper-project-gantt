@@ -14,6 +14,9 @@ __pycache__/
 node_modules/
 npm-debug.log*
 
+# Supabase CLI (Deno-based) leaves this behind
+deno.lock
+
 # Agent memory & private docs
 _docs/
 CLAUDE.md
