@@ -824,6 +824,214 @@ body {
 
 /* Pane is now in normal flow — no wrapper padding compensation needed. */
 
+/* ============================================================
+   Notion sync UI — badges, banner, toast, modal
+   ============================================================ */
+
+/* Per-row sync-status badge. Painted as an ::after on the bar label so it
+   sits in the label area next to the task name. `clean` renders a subtle
+   green dot; the other three use their own glyph + tint. */
+.gantt .bar-wrapper[data-sync-status] .bar-label::after {
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: rgba(15, 23, 42, 0.85);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.gantt .bar-wrapper[data-sync-status="clean"] .bar-label::after {
+  content: "";
+}
+.gantt .bar-wrapper[data-sync-status="local_ahead"] .bar-label::after {
+  content: " \2191";
+  fill: #60a5fa;
+}
+.gantt .bar-wrapper[data-sync-status="notion_ahead"] .bar-label::after {
+  content: " \2193";
+  fill: #c084fc;
+}
+.gantt .bar-wrapper[data-sync-status="conflict"] .bar-label::after {
+  content: " \26A0";
+  fill: #fbbf24;
+}
+
+/* Optional subtle tint on the row background (left strip) for conflict
+   rows so they draw the eye even with the banner present. */
+.gantt .bar-wrapper[data-sync-status="conflict"] .bar {
+  stroke: #fbbf24;
+  stroke-width: 1.5px;
+}
+
+/* Conflict banner — yellow strip above the chart, hidden when there are no
+   conflicts. Matches the related-banner visual system but warm-toned. */
+#conflict-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.22), rgba(249, 115, 22, 0.12));
+  border-bottom: 1px solid rgba(251, 191, 36, 0.55);
+  color: #fde68a;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+#conflict-banner[hidden] { display: none; }
+#conflict-banner strong { color: #fef3c7; font-weight: 600; }
+#conflict-banner-review {
+  background: rgba(15, 23, 42, 0.55);
+  color: #fde68a;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+#conflict-banner-review:hover {
+  background: rgba(15, 23, 42, 0.85);
+  border-color: rgba(251, 191, 36, 0.9);
+}
+
+/* Toolbar buttons shared with Pull/Push (match #sim-controls button) */
+#sim-controls #pull-from-notion-btn { color: #93c5fd; }
+#sim-controls #push-to-notion-btn { color: #fbbf24; }
+#sim-controls button[aria-busy="true"] {
+  opacity: 0.7;
+  cursor: wait;
+}
+/* Inline spinner glyph added by JS inside the button text while in-flight */
+.ppg-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border: 2px solid rgba(148, 163, 184, 0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ppg-spin 0.7s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes ppg-spin { to { transform: rotate(360deg); } }
+
+/* Toast notifications — bottom-right corner, auto-dismiss after ~3s */
+#ppg-toast-host {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+#ppg-toast-host .ppg-toast {
+  pointer-events: auto;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-left: 4px solid #3b82f6;
+  color: #e2e8f0;
+  padding: 10px 14px;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  min-width: 200px;
+  max-width: 360px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+#ppg-toast-host .ppg-toast.is-open {
+  opacity: 1;
+  transform: translateY(0);
+}
+#ppg-toast-host .ppg-toast.is-error {
+  border-left-color: #ef4444;
+  color: #fecaca;
+}
+#ppg-toast-host .ppg-toast.is-success {
+  border-left-color: #10b981;
+}
+
+/* Conflict modal — simple centered dialog, placeholder UI for v1 */
+#conflict-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0;
+}
+#conflict-modal::backdrop { background: rgba(15, 23, 42, 0.72); }
+#conflict-modal .dialog-body { padding: 16px; overflow-y: auto; max-height: calc(100vh - 60px); }
+#conflict-modal h2 { margin: 0 0 12px; font-size: 16px; color: #fde68a; }
+#conflict-modal p { margin: 0 0 12px; font-size: 13px; color: #cbd5e1; line-height: 1.4; }
+#conflict-modal .ppg-conflict-row {
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: #111827;
+}
+#conflict-modal .ppg-conflict-row h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+#conflict-modal .ppg-conflict-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+#conflict-modal .ppg-conflict-diff .col-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin-bottom: 2px;
+}
+#conflict-modal .ppg-conflict-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+#conflict-modal .ppg-conflict-actions button {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#conflict-modal .ppg-conflict-actions button:hover {
+  background: #334155;
+  border-color: #475569;
+}
+#conflict-modal .ppg-conflict-actions button.is-keep-local { color: #93c5fd; }
+#conflict-modal .ppg-conflict-actions button.is-keep-notion { color: #c084fc; }
+#conflict-modal .ppg-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+#conflict-modal .ppg-modal-footer button {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
 /* Reduced motion: collapse the fade/slide transitions but keep the feature
    functional for users who prefer instant state changes. */
 @media (prefers-reduced-motion: reduce) {

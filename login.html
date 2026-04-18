@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="robots" content="noindex, nofollow" />
-  <title>PPGantt · Login</title>
+  <title>PPGantt · Sign in</title>
   <style>
     :root {
       --bg: #141633;
@@ -17,13 +17,12 @@
       --accent-softer: rgba(73, 81, 148, 0.22);
       --brand: #6D639C;
       --error: #F87171;
+      --success: #7EC99A;
       --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, 'Courier New', monospace;
       --display: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     html, body {
       margin: 0;
@@ -56,7 +55,7 @@
 
     .login-wrap {
       width: 100%;
-      max-width: 360px;
+      max-width: 380px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -85,7 +84,7 @@
       letter-spacing: 0.02em;
       color: var(--text);
       opacity: 0.7;
-      margin: 0 0 20px 0;
+      margin: 0 0 24px 0;
       user-select: none;
       animation: fadeIn 0.4s linear 0.15s both;
     }
@@ -96,565 +95,300 @@
       text-transform: uppercase;
       letter-spacing: 0.12em;
       color: var(--muted);
-      margin: 0 0 32px 0;
+      margin: 0 0 28px 0;
       animation: fadeIn 0.4s linear 0.2s both;
     }
 
-    .digits {
+    form.auth-form {
+      width: 100%;
       display: flex;
-      gap: 12px;
-      margin-bottom: 28px;
+      flex-direction: column;
+      gap: 16px;
       animation: fadeIn 0.4s linear 0.3s both;
     }
 
-    .digits.shake {
-      animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
-    }
-
-    @keyframes shake {
-      10%, 90% { transform: translateX(-2px); }
-      20%, 80% { transform: translateX(4px); }
-      30%, 50%, 70% { transform: translateX(-8px); }
-      40%, 60% { transform: translateX(8px); }
-    }
-
-    .digit {
-      width: 56px;
-      height: 72px;
-      text-align: center;
+    label.field-label {
       font-family: var(--mono);
-      font-size: 28px;
-      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.10em;
+      color: var(--muted);
+      margin: 0 0 6px 0;
+    }
+
+    input.email {
+      width: 100%;
+      height: 48px;
+      padding: 0 14px;
+      font-family: var(--mono);
+      font-size: 16px;
       color: var(--text);
-      background: transparent;
-      border: none;
-      border-bottom: 2px solid #3A3D6A;
+      background: var(--bg-soft);
+      border: 1px solid var(--border);
+      border-radius: 10px;
       outline: none;
-      padding: 0;
-      caret-color: var(--accent);
-      transition: border-color 0.2s, color 0.2s;
+      transition: border-color 0.2s, background 0.2s;
       -webkit-appearance: none;
       appearance: none;
-      border-radius: 0;
     }
 
-    .digit:focus {
-      border-bottom-color: var(--accent);
+    input.email:focus {
+      border-color: var(--accent);
+      background: #1F2149;
     }
 
-    .digits.error .digit {
-      border-bottom-color: var(--error);
-      color: var(--error);
+    input.email:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
 
-    .digit:disabled {
-      opacity: 0.6;
+    input.email::placeholder {
+      color: #4A4D7A;
+    }
+
+    button.submit {
+      width: 100%;
+      height: 48px;
+      font-family: var(--mono);
+      font-size: 14px;
+      letter-spacing: 0.04em;
+      color: #fff;
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.05s, opacity 0.2s;
+      -webkit-appearance: none;
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    button.submit:hover:not(:disabled) {
+      background: #5A639F;
+      border-color: #5A639F;
+    }
+
+    button.submit:active:not(:disabled) {
+      transform: scale(0.99);
+    }
+
+    button.submit:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    button.submit:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
 
     .message {
       min-height: 18px;
       font-family: var(--mono);
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      margin-bottom: 12px;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      line-height: 1.5;
+      margin-top: 4px;
       opacity: 0;
       transition: opacity 0.25s ease;
+      text-align: center;
     }
 
-    .message.visible {
-      opacity: 1;
-    }
-
-    .message.error {
-      color: var(--error);
-    }
-
-    .message.warn {
-      color: #F3C969;
-    }
+    .message.visible { opacity: 1; }
+    .message.error   { color: var(--error); }
+    .message.success { color: var(--success); }
 
     .spinner {
-      width: 20px;
-      height: 20px;
-      border: 2px solid var(--accent);
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.9);
       border-top-color: transparent;
       border-radius: 50%;
-      margin: 4px 0 14px 0;
-      opacity: 0;
-      transition: opacity 0.2s;
+      display: none;
     }
 
     .spinner.visible {
-      opacity: 1;
+      display: inline-block;
       animation: spin 0.8s linear infinite;
     }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .numpad {
-      display: grid;
-      grid-template-columns: repeat(3, 64px);
-      gap: 8px;
-      margin-top: 4px;
-      animation: fadeIn 0.4s linear 0.45s both;
-    }
-
-    .key {
-      width: 64px;
-      height: 56px;
-      min-width: 48px;
-      min-height: 48px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: var(--mono);
-      font-size: 22px;
-      color: var(--text);
-      background: var(--bg-soft);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      cursor: pointer;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
-      transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.05s;
-      padding: 0;
-    }
-
-    .key:hover:not(:disabled) {
-      background: var(--accent-soft);
-      border-color: var(--accent);
-      color: #fff;
-    }
-
-    .key:active:not(:disabled) {
-      background: var(--accent-softer);
-      transform: scale(0.97);
-    }
-
-    .key:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
-
-    .key:disabled {
-      opacity: 0.35;
-      cursor: default;
-    }
-
-    .key--back {
-      color: #9BA0C8;
-      font-size: 20px;
-    }
-
-    .key--enter {
-      color: var(--accent);
-      font-size: 20px;
-    }
-
-    .key--enter:hover:not(:disabled) {
-      background: var(--accent);
-      color: #fff;
-    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     @media (min-width: 480px) {
       .brand { font-size: 52px; }
-      .digit { width: 60px; height: 76px; font-size: 30px; }
-      .numpad { grid-template-columns: repeat(3, 68px); gap: 10px; }
-      .key { width: 68px; height: 60px; font-size: 24px; }
     }
 
     @media (max-height: 640px) {
       .brand { font-size: 34px; }
       .slug { margin-bottom: 14px; }
       .subtitle { margin-bottom: 20px; }
-      .digits { margin-bottom: 18px; }
-      .digit { height: 60px; font-size: 24px; }
-    }
-
-    /* hide native number spinners */
-    .digit::-webkit-outer-spin-button,
-    .digit::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
-    .digit {
-      -moz-appearance: textfield;
     }
   </style>
 </head>
 <body>
-  <main class="login-wrap" role="main" aria-label="PPGantt login">
+  <main class="login-wrap" role="main" aria-label="PPGantt sign in">
     <h1 class="brand" aria-label="PPGantt">PPGantt</h1>
-    <p class="slug" id="slug-label">/societist</p>
-    <p class="subtitle">Enter access code</p>
+    <p class="slug" id="slug-label">Sign in</p>
+    <p class="subtitle">Magic link sign-in</p>
 
-    <div class="digits" id="digits" role="group" aria-label="Four digit access code">
-      <input class="digit" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" aria-label="PIN digit 1 of 4" />
-      <input class="digit" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="PIN digit 2 of 4" />
-      <input class="digit" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="PIN digit 3 of 4" />
-      <input class="digit" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="PIN digit 4 of 4" />
-    </div>
-
-    <p class="message" id="message" role="status" aria-live="polite"></p>
-
-    <div class="spinner" id="spinner" role="status" aria-label="Validating"></div>
-
-    <div class="numpad" id="numpad" role="group" aria-label="PIN numpad">
-      <button type="button" class="key" data-num="1" aria-label="1">1</button>
-      <button type="button" class="key" data-num="2" aria-label="2">2</button>
-      <button type="button" class="key" data-num="3" aria-label="3">3</button>
-      <button type="button" class="key" data-num="4" aria-label="4">4</button>
-      <button type="button" class="key" data-num="5" aria-label="5">5</button>
-      <button type="button" class="key" data-num="6" aria-label="6">6</button>
-      <button type="button" class="key" data-num="7" aria-label="7">7</button>
-      <button type="button" class="key" data-num="8" aria-label="8">8</button>
-      <button type="button" class="key" data-num="9" aria-label="9">9</button>
-      <button type="button" class="key key--back" data-action="back" aria-label="Backspace">&#8592;</button>
-      <button type="button" class="key" data-num="0" aria-label="0">0</button>
-      <button type="button" class="key key--enter" data-action="enter" aria-label="Submit">&#10003;</button>
-    </div>
+    <form class="auth-form" id="auth-form" novalidate>
+      <div>
+        <label class="field-label" for="email">Email</label>
+        <input
+          class="email"
+          id="email"
+          name="email"
+          type="email"
+          autocomplete="email"
+          inputmode="email"
+          required
+          placeholder="you@example.com"
+          aria-label="Email address"
+        />
+      </div>
+      <button class="submit" id="submit-btn" type="submit">
+        <span id="submit-label">Send magic link</span>
+        <span class="spinner" id="spinner" aria-hidden="true"></span>
+      </button>
+      <p class="message" id="message" role="status" aria-live="polite"></p>
+    </form>
   </main>
 
-  <script>
-    (function () {
-      'use strict';
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/supabase-config.js';
 
-      var digitsEl = document.getElementById('digits');
-      var inputs = Array.prototype.slice.call(digitsEl.querySelectorAll('.digit'));
-      var messageEl = document.getElementById('message');
-      var spinnerEl = document.getElementById('spinner');
-      var numpadEl = document.getElementById('numpad');
-      var numpadButtons = Array.prototype.slice.call(numpadEl.querySelectorAll('.key'));
-      var enterBtn = numpadEl.querySelector('[data-action="enter"]');
-      var slugLabelEl = document.getElementById('slug-label');
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
 
-      (function setSlugLabel() {
-        try {
-          var params = new URLSearchParams(window.location.search);
-          var r = params.get('redirect');
-          if (r && /^\/[a-z0-9-]+$/.test(r)) {
-            slugLabelEl.textContent = r;
-          }
-        } catch (e) {}
-      })();
+    const form = document.getElementById('auth-form');
+    const emailInput = document.getElementById('email');
+    const submitBtn = document.getElementById('submit-btn');
+    const submitLabel = document.getElementById('submit-label');
+    const spinner = document.getElementById('spinner');
+    const messageEl = document.getElementById('message');
+    const slugLabelEl = document.getElementById('slug-label');
 
-      var loading = false;
-
-      function getDigits() {
-        return inputs.map(function (i) { return i.value || ''; });
-      }
-
-      function setDigits(arr) {
-        for (var i = 0; i < 4; i++) {
-          inputs[i].value = arr[i] || '';
+    // Set subtitle from ?redirect= param: "Sign in to societist" or just "Sign in"
+    (function setSlugLabel() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const r = params.get('redirect');
+        if (r && /^\/[a-z0-9-]+$/.test(r)) {
+          const s = r.replace(/^\//, '');
+          slugLabelEl.textContent = 'Sign in to ' + s;
         }
-        updateEnterState();
-      }
+      } catch (_) { /* keep default */ }
+    })();
 
-      function clearDigits() {
-        setDigits(['', '', '', '']);
-      }
-
-      function firstEmptyIndex() {
-        var d = getDigits();
-        for (var i = 0; i < 4; i++) if (!d[i]) return i;
-        return -1;
-      }
-
-      function lastFilledIndex() {
-        var d = getDigits();
-        for (var i = 3; i >= 0; i--) if (d[i]) return i;
-        return -1;
-      }
-
-      function focusIndex(i) {
-        if (i < 0) i = 0;
-        if (i > 3) i = 3;
-        inputs[i].focus();
-        try { inputs[i].setSelectionRange(inputs[i].value.length, inputs[i].value.length); } catch (e) {}
-      }
-
-      function updateEnterState() {
-        var full = getDigits().every(function (d) { return d !== ''; });
-        enterBtn.disabled = loading || !full;
-      }
-
-      function setLoading(on) {
-        loading = on;
-        if (on) {
-          spinnerEl.classList.add('visible');
-        } else {
-          spinnerEl.classList.remove('visible');
+    // Show logout confirmation if arrived via ?logout=1
+    (function showLogoutFlash() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('logout') === '1') {
+          showMessage('Signed out.', null);
         }
-        inputs.forEach(function (i) { i.disabled = on; });
-        numpadButtons.forEach(function (b) {
-          if (b === enterBtn) return;
-          b.disabled = on;
-        });
-        updateEnterState();
+      } catch (_) {}
+    })();
+
+    function safeRedirectTarget() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const r = params.get('redirect');
+        if (r && r.charAt(0) === '/' && r.indexOf('//') === -1) return r;
+      } catch (_) {}
+      return '/';
+    }
+
+    function setLoading(on) {
+      submitBtn.disabled = on;
+      emailInput.disabled = on;
+      if (on) {
+        submitLabel.textContent = 'Sending...';
+        spinner.classList.add('visible');
+      } else {
+        submitLabel.textContent = 'Send magic link';
+        spinner.classList.remove('visible');
+      }
+    }
+
+    function showMessage(text, type) {
+      messageEl.textContent = text;
+      messageEl.classList.remove('error', 'success');
+      if (type) messageEl.classList.add(type);
+      // force reflow so the fade animates on re-show
+      void messageEl.offsetWidth;
+      messageEl.classList.add('visible');
+    }
+
+    function hideMessage() {
+      messageEl.classList.remove('visible');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideMessage();
+
+      const email = (emailInput.value || '').trim();
+      // Rely on the browser's native email validity — if it's empty or
+      // malformed, reportValidity() will show the native bubble.
+      if (!emailInput.checkValidity()) {
+        emailInput.reportValidity();
+        return;
       }
 
-      function showMessage(text, type) {
-        messageEl.textContent = text;
-        messageEl.classList.remove('error', 'warn');
-        if (type) messageEl.classList.add(type);
-        // force reflow so the fade animates on re-show
-        void messageEl.offsetWidth;
-        messageEl.classList.add('visible');
-      }
+      const redirect = safeRedirectTarget();
+      const emailRedirectTo =
+        window.location.origin + '/auth/callback?next=' + encodeURIComponent(redirect);
 
-      function hideMessage() {
-        messageEl.classList.remove('visible');
-      }
-
-      function triggerShake() {
-        digitsEl.classList.remove('shake');
-        void digitsEl.offsetWidth;
-        digitsEl.classList.add('shake');
-      }
-
-      function setErrorState(on) {
-        if (on) digitsEl.classList.add('error');
-        else digitsEl.classList.remove('error');
-      }
-
-      function safeRedirectTarget() {
-        try {
-          var params = new URLSearchParams(window.location.search);
-          var r = params.get('redirect');
-          if (r && r.charAt(0) === '/' && r.indexOf('//') === -1) {
-            return r;
-          }
-        } catch (e) {}
-        return '/society';
-      }
-
-      function submitPin(pin) {
-        if (loading) return;
-        if (!/^\d{4}$/.test(pin)) return;
-
-        setLoading(true);
-        hideMessage();
-        setErrorState(false);
-
-        fetch('/.netlify/functions/validate-pin', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+      setLoading(true);
+      try {
+        const { error } = await supabase.auth.signInWithOtp({
+          email,
+          options: {
+            emailRedirectTo,
+            shouldCreateUser: false,
           },
-          credentials: 'same-origin',
-          body: JSON.stringify({ pin: pin })
-        }).then(function (res) {
-          if (res.status === 200) {
-            return res.json().then(function (data) {
-              if (data && data.valid) {
-                window.location.replace(safeRedirectTarget());
-              } else {
-                handleInvalid();
-              }
-            }).catch(function () {
-              // 200 but bad JSON — treat as success if cookie was set, else invalid
-              window.location.replace(safeRedirectTarget());
-            });
-          }
-          if (res.status === 401) {
-            handleInvalid();
-            return;
-          }
-          handleServerError();
-        }).catch(function () {
-          handleServerError();
         });
-      }
 
-      function handleInvalid() {
-        setLoading(false);
-        setErrorState(true);
-        triggerShake();
-        showMessage('Invalid code', 'error');
-        clearDigits();
-        focusIndex(0);
-        // clear error styling after shake so next typed digit looks normal
-        setTimeout(function () { setErrorState(false); }, 450);
-      }
-
-      function handleServerError() {
-        setLoading(false);
-        setErrorState(true);
-        triggerShake();
-        showMessage('Something went wrong, try again', 'error');
-        clearDigits();
-        focusIndex(0);
-        setTimeout(function () { setErrorState(false); }, 450);
-      }
-
-      // --- input events ---
-
-      inputs.forEach(function (input, i) {
-        input.addEventListener('input', function (e) {
-          hideMessage();
-          setErrorState(false);
-          var v = input.value;
-          // only digits
-          v = v.replace(/\D/g, '');
-          if (!v) {
-            input.value = '';
-            updateEnterState();
-            return;
-          }
-          // if user typed multiple (e.g. autofill), spread them
-          if (v.length > 1) {
-            var chars = v.split('');
-            for (var k = 0; k < chars.length && (i + k) < 4; k++) {
-              inputs[i + k].value = chars[k];
-            }
-            var nextIdx = Math.min(i + chars.length, 3);
-            focusIndex(nextIdx);
+        if (error) {
+          // Don't leak whether the address exists in the users table.
+          // Treat a "user not found" style error the same as success.
+          if (/not.*found|sign.*up|invalid.*login/i.test(error.message || '')) {
+            showMessage('Check your email for a link to sign in.', 'success');
           } else {
-            input.value = v.slice(-1);
-            if (i < 3) focusIndex(i + 1);
+            showMessage('Could not send. Try again.', 'error');
           }
-          updateEnterState();
-          var d = getDigits();
-          if (d.every(function (x) { return x !== ''; })) {
-            submitPin(d.join(''));
-          }
-        });
+        } else {
+          showMessage('Check your email for a link to sign in.', 'success');
+        }
+      } catch (_) {
+        showMessage('Could not send. Try again.', 'error');
+      } finally {
+        setLoading(false);
+      }
+    });
 
-        input.addEventListener('keydown', function (e) {
-          if (e.key === 'Backspace') {
-            if (!input.value && i > 0) {
-              e.preventDefault();
-              inputs[i - 1].value = '';
-              focusIndex(i - 1);
-              updateEnterState();
-              hideMessage();
-              setErrorState(false);
-            }
-          } else if (e.key === 'ArrowLeft' && i > 0) {
-            e.preventDefault();
-            focusIndex(i - 1);
-          } else if (e.key === 'ArrowRight' && i < 3) {
-            e.preventDefault();
-            focusIndex(i + 1);
-          } else if (e.key === 'Enter') {
-            e.preventDefault();
-            var d = getDigits();
-            if (d.every(function (x) { return x !== ''; })) {
-              submitPin(d.join(''));
-            }
-          }
-        });
-
-        input.addEventListener('focus', function () {
-          try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
-        });
-      });
-
-      // paste on any digit box
-      inputs.forEach(function (input) {
-        input.addEventListener('paste', function (e) {
-          var cd = e.clipboardData || window.clipboardData;
-          if (!cd) return;
-          var pasted = (cd.getData('text') || '').replace(/\D/g, '').slice(0, 4);
-          if (pasted.length === 4) {
-            e.preventDefault();
-            setDigits(pasted.split(''));
-            focusIndex(3);
-            submitPin(pasted);
-          } else if (pasted.length > 0) {
-            e.preventDefault();
-            var cur = getDigits();
-            var start = firstEmptyIndex();
-            if (start === -1) start = 0;
-            for (var k = 0; k < pasted.length && (start + k) < 4; k++) {
-              cur[start + k] = pasted.charAt(k);
-            }
-            setDigits(cur);
-            focusIndex(Math.min(start + pasted.length, 3));
-            if (cur.every(function (x) { return x !== ''; })) {
-              submitPin(cur.join(''));
-            }
-          }
-        });
-      });
-
-      // --- numpad events ---
-
-      function padPressNumber(n) {
-        if (loading) return;
-        hideMessage();
-        setErrorState(false);
-        var idx = firstEmptyIndex();
-        if (idx === -1) return;
-        inputs[idx].value = String(n);
-        focusIndex(Math.min(idx + 1, 3));
-        updateEnterState();
-        if (idx === 3) {
-          var d = getDigits();
-          if (d.every(function (x) { return x !== ''; })) {
-            submitPin(d.join(''));
+    // If user is already signed in, bounce straight to the redirect target.
+    (async function maybeBypass() {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data && data.session) {
+          const r = safeRedirectTarget();
+          // Only auto-redirect for gated slug routes, never to /
+          if (/^\/[a-z0-9-]+$/.test(r)) {
+            window.location.replace(r);
           }
         }
-      }
-
-      function padBackspace() {
-        if (loading) return;
-        hideMessage();
-        setErrorState(false);
-        var idx = lastFilledIndex();
-        if (idx === -1) return;
-        inputs[idx].value = '';
-        focusIndex(idx);
-        updateEnterState();
-      }
-
-      function padSubmit() {
-        if (loading) return;
-        var d = getDigits();
-        if (d.every(function (x) { return x !== ''; })) {
-          submitPin(d.join(''));
-        }
-      }
-
-      numpadButtons.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var num = btn.getAttribute('data-num');
-          var action = btn.getAttribute('data-action');
-          if (num !== null) {
-            padPressNumber(parseInt(num, 10));
-          } else if (action === 'back') {
-            padBackspace();
-          } else if (action === 'enter') {
-            padSubmit();
-          }
-        });
-        // prevent button click from stealing focus on mobile in a way that hides the soft keyboard abruptly
-        btn.addEventListener('mousedown', function (e) { e.preventDefault(); });
-      });
-
-      // global Enter while focus is elsewhere
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-          var active = document.activeElement;
-          if (active && active.classList && active.classList.contains('digit')) return;
-          var d = getDigits();
-          if (d.every(function (x) { return x !== ''; })) {
-            e.preventDefault();
-            submitPin(d.join(''));
-          }
-        }
-      });
-
-      // initial focus
-      window.addEventListener('load', function () {
-        setTimeout(function () { focusIndex(0); }, 50);
-      });
-      focusIndex(0);
-      updateEnterState();
+      } catch (_) { /* ignore */ }
     })();
   </script>
 </body>

@@ -154,6 +154,32 @@
     return 0;
   }
 
+  // Append a `sync-status-<value>` token to each task's custom_class so the
+  // CSS can render a per-row Notion-sync badge. Idempotent: strips any
+  // previously-appended sync-status-* token before adding the current one, so
+  // re-renders after a pull/push don't accumulate classes. Called from the
+  // render path just before Frappe Gantt paints. Tasks without a meta.sync
+  // value are treated as `clean` (the common case for imported data).
+  //
+  // Valid values per the Supabase proposal §3.2:
+  //   clean | local_ahead | notion_ahead | conflict
+  // Anything else falls back to `clean` (no badge).
+  var _VALID_SYNC_STATUSES = { clean: 1, local_ahead: 1, notion_ahead: 1, conflict: 1 };
+  function _applySyncStatusClass(tasks) {
+    if (!Array.isArray(tasks)) return;
+    for (var i = 0; i < tasks.length; i += 1) {
+      var task = tasks[i];
+      if (!task) continue;
+      var status = (task.meta && task.meta.notion_sync_status) || null;
+      if (!status || !_VALID_SYNC_STATUSES[status]) status = 'clean';
+      var existing = String(task.custom_class || '')
+        .split(/\s+/)
+        .filter(function (c) { return c && c.indexOf('sync-status-') !== 0; })
+        .join(' ');
+      task.custom_class = (existing ? existing + ' ' : '') + 'sync-status-' + status;
+    }
+  }
+
   function _getDisplayTasks(tasks, mode) {
     if (!Array.isArray(tasks)) {
       return tasks;
@@ -481,6 +507,26 @@
    * CSS handles the diamond rotation. This function does an additional
    * data attribute annotation for future integration hooks.
    */
+  /**
+   * Tag each bar-wrapper with `data-sync-status="<value>"` so the Notion-
+   * sync badge CSS can attach an ::after pseudo-element to the label column
+   * without CSS having to parse multi-token classes. Runs post-render so
+   * it survives Frappe Gantt's own class churn.
+   */
+  function _annotateSyncStatus() {
+    if (!_ganttInstance) return;
+    const svg = _ganttInstance.$svg;
+    if (!svg) return;
+
+    _tasks.forEach(function (task) {
+      const wrapper = svg.querySelector('[data-id="' + task.id + '"]');
+      if (!wrapper) return;
+      const raw = (task.meta && task.meta.notion_sync_status) || 'clean';
+      const status = _VALID_SYNC_STATUSES[raw] ? raw : 'clean';
+      wrapper.setAttribute('data-sync-status', status);
+    });
+  }
+
   function _annotateMilestones() {
     if (!_ganttInstance) return;
     const svg = _ganttInstance.$svg;
@@ -824,6 +870,11 @@
     // Apply palette as CSS custom properties
     _applyPalette(_palette);
 
+    // Stamp each task with a sync-status-<value> class so the viewer's CSS
+    // can render the Notion-sync badge on every row. Mutates custom_class
+    // in place; idempotent on re-render.
+    _applySyncStatusClass(tasks);
+
     const displayTasks = _getDisplayTasks(tasks, _viewMode);
 
     // Build Frappe Gantt options
@@ -896,6 +947,7 @@
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
         _applySlackTails();
+        _annotateSyncStatus();
         _annotateMilestones();
         _applyStreamStripes();
         _promoteBarLabels();

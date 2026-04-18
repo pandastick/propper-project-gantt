@@ -3,12 +3,10 @@
 # Public OSS users: this file is safe to ignore. It only affects deployment
 # to Netlify. The viewer still runs locally via `npm start` regardless.
 #
-# For Netlify-hosted deployments with PIN-gated private slugs, you must set
-# three environment variables in the Netlify dashboard:
-#   - PPGANTT_PINS          base64-encoded JSON map of PIN → {name, slugs}
-#   - GITHUB_DATA_TOKEN     fine-grained PAT for read access to your private data repo
-#   - PPGANTT_JWT_SECRET    32+ random bytes of base64 for signing session cookies
-# See netlify/functions/validate-pin.js and get-roadmap.js for details.
+# Auth is delegated to Supabase Auth (magic-link). The publishable (anon)
+# key and Supabase URL live in js/supabase-config.js. The Netlify Function
+# get-roadmap.js verifies the caller's Supabase JWT against Supabase's
+# JWKS / a shared secret — see that function for details.
 
 [build]
   publish = "."
@@ -19,8 +17,8 @@
   command = "npm install"
 
 # Route each private slug to index.html. The viewer detects the slug from
-# the URL via js/auth-gate.js and fetches the correct roadmap through the
-# Netlify Function. Add more slugs here as needed (e.g. /rvms, /cpu).
+# the URL via js/supabase-gate.js and fetches the correct roadmap through
+# the Netlify Function. Add more slugs here as needed (e.g. /rvms, /cpu).
 [[redirects]]
   from = "/societist"
   to = "/index.html"
@@ -29,6 +27,15 @@
 [[redirects]]
   from = "/login"
   to = "/login.html"
+  status = 200
+
+# Supabase magic-link callback lands here. We serve index.html; the
+# Supabase JS client runs on page load, reads the tokens from the URL
+# hash, persists the session, and then supabase-gate.js routes the
+# user to the `next` slug.
+[[redirects]]
+  from = "/auth/callback"
+  to = "/index.html"
   status = 200
 
 # Security headers applied to every response
