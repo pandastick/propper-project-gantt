@@ -111,6 +111,15 @@
     if (isFileProtocol) {
       return _fetchJson(DATA_DIR + filename);
     }
+    // On gated slug routes (Supabase-backed), we MUST NOT fall back to the
+    // static data/ directory — doing so quietly returns the Notion-era
+    // snapshot (roadmap.json) and masks auth/authz errors.  The gate sets
+    // window.__PPGANTT_SLUG__ on gated routes; its presence is the signal
+    // to stay on the API path and let errors surface.
+    var isGated = typeof window !== 'undefined' && !!window.__PPGANTT_SLUG__;
+    if (isGated) {
+      return _fetchJson(API_DATA + filename);
+    }
     return _fetchJson(API_DATA + filename).catch(function () {
       return _fetchJson(DATA_DIR + filename);
     });

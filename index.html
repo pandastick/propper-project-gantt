@@ -1751,6 +1751,28 @@
         });
       }
 
+      // Helper: POST to a Netlify Function with the current Supabase JWT
+      // attached.  The supabase-gate.js fetch override only rewrites
+      // /api/data/<slug>.json URLs; direct calls to /.netlify/functions/*
+      // bypass it and would otherwise go out without Authorization,
+      // giving 401 back.  This helper patches that gap.
+      async function _ppgAuthPost(url, body) {
+        var sb = window.__PPGANTT_SUPABASE__;
+        if (!sb) throw new Error('Supabase client unavailable — not on a gated route?');
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) throw new Error('No active Supabase session.');
+        return fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + session.access_token,
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+      }
+
       async function _pullFromNotion() {
         var btn = document.getElementById('pull-from-notion-btn');
         var slug = window.__PPGANTT_SLUG__;
@@ -1760,12 +1782,7 @@
         }
         _ppgSetBusy(btn, true, 'Pulling...');
         try {
-          var res = await fetch('/.netlify/functions/pull-from-notion', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ slug: slug }),
-          });
+          var res = await _ppgAuthPost('/.netlify/functions/pull-from-notion', { slug: slug });
           var data = null;
           try { data = await res.json(); } catch (_) { /* non-JSON */ }
           if (!res.ok) {
@@ -1843,11 +1860,9 @@
             var end = Math.min(start + _PPG_PUSH_CHUNK_SIZE, pushable);
             var chunkIds = pushableIds.slice(start, end);
             _ppgSetBusy(btn, true, 'Pushing ' + end + '/' + pushable + '...');
-            var res = await fetch('/.netlify/functions/push-to-notion', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'same-origin',
-              body: JSON.stringify({ slug: slug, notion_page_ids: chunkIds }),
+            var res = await _ppgAuthPost('/.netlify/functions/push-to-notion', {
+              slug: slug,
+              notion_page_ids: chunkIds,
             });
             var data = null;
             try { data = await res.json(); } catch (_) { /* non-JSON */ }
@@ -2137,20 +2152,65 @@
       // If both fail, we show a helpful error with server instructions.
 
       document.addEventListener('DOMContentLoaded', function () {
-        _loadInitialData()
-          .then(function (result) {
-            renderFromJson(result.json);
-          })
-          .catch(function (err) {
-            if (window.location.protocol === 'file:') {
-              _resolveInitialFilename().then(function (filename) {
-                _tryScriptInjection(filename);
-              });
-              return;
-            }
-            showError('Load failed: ' + (err.message || String(err)));
-            console.error('[PPGantt]', err);
-          });
+        // On gated slug routes (e.g. /societist), supabase-gate.js is a
+        // module script that installs a fetch() override and sets
+        // __PPGANTT_SLUG__.  Timing relative to DOMContentLoaded is
+        // non-deterministic: the gate may or may not have run by the time
+        // this listener fires, depending on network latency to the Supabase
+        // ESM CDN.  To avoid stale loads we:
+        //   1. Skip the initial _loadInitialData() entirely on gated routes
+        //      UNTIL ppgantt:slug-ready has fired.  The static fallback to
+        //      data/_manifest.json → data/roadmap.json (Notion-era snapshot)
+        //      is the failure we're preventing.
+        //   2. On non-gated routes (/, fixtures) load immediately.
+        //   3. If ppgantt:slug-ready never fires within 5s (gate broken or
+        //      misconfigured), load anyway so a bug in the gate doesn't
+        //      leave the viewer blank forever.
+        var path = window.location.pathname || '/';
+        var isGatedSlugRoute = /^\/[a-z0-9-]+$/.test(path) && path !== '/';
+        function startLoad() {
+          _loadInitialData()
+            .then(function (result) {
+              renderFromJson(result.json);
+            })
+            .catch(function (err) {
+              if (window.location.protocol === 'file:') {
+                _resolveInitialFilename().then(function (filename) {
+                  _tryScriptInjection(filename);
+                });
+                return;
+              }
+              showError('Load failed: ' + (err.message || String(err)));
+              console.error('[PPGantt]', err);
+            });
+        }
+        if (isGatedSlugRoute) {
+          // On gated routes, supabase-gate.js must finish installing its
+          // fetch() override AND setting __PPGANTT_SLUG__ before we load
+          // data — otherwise the loader hits /api/manifest via native fetch,
+          // falls through to static data/_manifest.json (Notion-era), and
+          // renders stale data.
+          //
+          // Three cases to handle:
+          //   (a) Gate already finished before DOMContentLoaded (fast
+          //       connections / cached ESM import).  __PPGANTT_SLUG__ set →
+          //       load immediately.
+          //   (b) Gate still pending → listen for ppgantt:slug-ready.
+          //   (c) Gate broken (network down, import error) → 5s safety net
+          //       loads anyway so the viewer isn't blank forever.
+          var started = false;
+          function kick() { if (started) return; started = true; startLoad(); }
+          if (window.__PPGANTT_SLUG__) {
+            // Case (a): gate already ran, override is installed, slug set.
+            kick();
+          } else {
+            // Case (b) + (c)
+            document.addEventListener('ppgantt:slug-ready', kick, { once: true });
+            setTimeout(kick, 5000);
+          }
+        } else {
+          startLoad();
+        }
       });
 
       // ─── Fallback: script tag injection (last resort for file://) ─────────
