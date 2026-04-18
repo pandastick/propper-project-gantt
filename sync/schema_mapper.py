@@ -38,6 +38,8 @@ CANONICAL_FIELDS = {
     "slack_field": "float/slack days number (optional)",
     "critical_path_field": "critical path checkbox (optional)",
     "risk_field": "risk level select (optional)",
+    "updated_by_field": "rich_text property stamped with the pusher's name when PPGantt writes back (optional; required for Push to Notion)",
+    "last_sync_field": "date property stamped with the ISO datetime of the PPGantt write-back (optional; required for Push to Notion)",
 }
 
 MAPPING_PROMPT_TEMPLATE = """You are a schema mapper for a Gantt chart tool called PPGantt.
@@ -60,6 +62,8 @@ Rules:
 - For "progress_field", choose a number property representing 0-100 completion.
 - For "color_field", choose a select property representing phase or category.
 - Optional fields (milestone_field, slack_field, critical_path_field, risk_field) can be null.
+- For "updated_by_field", look for a rich_text property whose name contains "Updated By" (e.g. "PPG Last Updated By"). Null if absent.
+- For "last_sync_field", look for a date property whose name contains "Last Sync" or "PPG" (e.g. "PPG Last Sync"). This is DISTINCT from any "MCP update" or "Last edited time" field — do not reuse those. Null if absent.
 
 Return ONLY a valid JSON object with these exact keys:
 {{
@@ -73,7 +77,9 @@ Return ONLY a valid JSON object with these exact keys:
   "milestone_field": "<Notion property name or null>",
   "slack_field": "<Notion property name or null>",
   "critical_path_field": "<Notion property name or null>",
-  "risk_field": "<Notion property name or null>"
+  "risk_field": "<Notion property name or null>",
+  "updated_by_field": "<Notion property name or null>",
+  "last_sync_field": "<Notion property name or null>"
 }}
 
 Do not include any explanation or markdown — only the JSON object.

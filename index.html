@@ -254,6 +254,7 @@
       <button id="undo-sim-btn" type="button" title="Undo the most recent simulation change" disabled>Undo</button>
       <button id="reset-sim-btn" type="button" title="Clear any active simulation and re-render original data">Reset simulation</button>
       <button id="export-changes-btn" type="button" title="Copy a Notion-MCP-ready markdown prompt to the clipboard">Export changes</button>
+      <button id="push-to-notion-btn" type="button" title="Available in team workspace (log in to a gated route)" disabled>Push to Notion</button>
       <span id="sim-status"></span>
     </div>
   </div>
@@ -1536,6 +1537,102 @@
         }
       }
 
+      function _extractPageIdFromEvent(ev) {
+        var candidates = [ev.taskNotionUrl, ev.taskId];
+        for (var i = 0; i < candidates.length; i++) {
+          var raw = candidates[i];
+          if (!raw) continue;
+          var dashed = raw.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+          if (dashed) return dashed[1];
+          var compact = raw.match(/([0-9a-f]{32})/i);
+          if (compact) {
+            var c = compact[1];
+            return c.slice(0, 8) + '-' + c.slice(8, 12) + '-' + c.slice(12, 16) + '-' + c.slice(16, 20) + '-' + c.slice(20, 32);
+          }
+        }
+        return null;
+      }
+
+      function _buildPushPayload(events) {
+        var changes = [];
+        for (var i = 0; i < events.length; i++) {
+          var ev = events[i];
+          var pageId = _extractPageIdFromEvent(ev);
+          if (!pageId) continue;
+          changes.push({ pageId: pageId, newStart: ev.newStart, newEnd: ev.newEnd });
+        }
+        return changes;
+      }
+
+      async function _pushToNotion() {
+        var btn = document.getElementById('push-to-notion-btn');
+        var slug = window.__PPGANTT_SLUG__;
+        if (!slug) {
+          alert('Push to Notion is only available on gated team routes (e.g. /societist). Use "Export changes" for the clipboard workflow instead.');
+          return;
+        }
+        _syncChangeLogFromSchedule();
+        if (!_changeLog || !_changeLog.hasChanges()) {
+          alert('No simulation changes to push. Drag a bar or click a task to push it first.');
+          return;
+        }
+        var changes = _buildPushPayload(_changeLog.events);
+        if (changes.length === 0) {
+          alert('No changes have resolvable Notion page IDs — aborting push.');
+          return;
+        }
+        if (!confirm('Push ' + changes.length + ' change(s) to Notion? The "Last Updated By" and "Last Sync" columns will be stamped.')) {
+          return;
+        }
+        var originalLabel = btn ? btn.textContent : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Pushing (' + changes.length + ')...';
+        }
+        try {
+          var res = await fetch('/.netlify/functions/push-to-notion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ slug: slug, changes: changes }),
+          });
+          var data = null;
+          try { data = await res.json(); } catch (_) { /* non-JSON */ }
+          if (!res.ok) {
+            var msg = (data && data.error) || ('HTTP ' + res.status);
+            alert('Push failed: ' + msg);
+            return;
+          }
+          var verifiedIds = new Set(
+            (data.results || [])
+              .filter(function (r) { return r.status === 'verified'; })
+              .map(function (r) { return r.pageId; })
+          );
+          var remaining = _changeLog.events.filter(function (ev) {
+            var pid = _extractPageIdFromEvent(ev);
+            return !pid || !verifiedIds.has(pid);
+          });
+          _changeLog.replaceEvents(remaining);
+          _updateSimStatus();
+          var summary = 'Push complete: ' + data.verifiedCount + ' verified, ' + data.failedCount + ' failed of ' + data.totalChanges + '.';
+          if (data.failedCount > 0) {
+            var failures = (data.results || [])
+              .filter(function (r) { return r.status !== 'verified'; })
+              .map(function (r) { return '• ' + (r.pageId || '(unknown)') + ' — ' + (r.status || 'unknown') + ': ' + (r.error || ''); })
+              .join('\n');
+            summary += '\n\nFailed rows remain in the change log:\n' + failures;
+          }
+          alert(summary);
+        } catch (err) {
+          alert('Push to Notion failed: ' + (err && err.message ? err.message : err));
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalLabel || 'Push to Notion';
+          }
+        }
+      }
+
       // ─── Zoom button wiring ───────────────────────────────────────────────
 
       document.querySelectorAll('.zoom-btn').forEach(function (btn) {
@@ -1567,6 +1664,14 @@
         if (undoBtn) undoBtn.addEventListener('click', _undoSimulation);
         if (resetBtn) resetBtn.addEventListener('click', _resetSimulation);
         if (exportBtn) exportBtn.addEventListener('click', _exportChanges);
+        var pushBtn = document.getElementById('push-to-notion-btn');
+        if (pushBtn) {
+          if (window.__PPGANTT_SLUG__) {
+            pushBtn.disabled = false;
+            pushBtn.title = 'Write changes directly to the Notion roadmap (stamps Last Updated By + Last Sync)';
+          }
+          pushBtn.addEventListener('click', _pushToNotion);
+        }
         if (monthLayoutBtn) {
           monthLayoutBtn.addEventListener('click', function () {
             if (monthLayoutBtn.disabled) return;
