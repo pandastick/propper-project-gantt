@@ -288,15 +288,24 @@
   -->
   <aside id="ppgantt-sidebar">
     <div id="sidebar-head">
-      <h3>Files</h3>
-      <button id="sidebar-refresh" type="button" title="Rebuild the manifest from files on disk" aria-label="Refresh manifest">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 3 v4 h-4"/>
-          <path d="M2 13 v-4 h4"/>
-          <path d="M13.5 7 A6 6 0 0 0 3 5.5"/>
-          <path d="M2.5 9 A6 6 0 0 0 13 10.5"/>
-        </svg>
-      </button>
+      <h3 id="sidebar-title">Files</h3>
+      <div id="sidebar-head-actions">
+        <button id="save-snapshot-btn" type="button" hidden disabled title="Save the current viewer state (with your edits) as a new snapshot" aria-label="Save snapshot">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3 h8 l2 2 v8 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 V4 a1 1 0 0 1 1 -1 z"/>
+            <path d="M5 3 v4 h6 V3"/>
+            <rect x="5" y="9" width="6" height="4"/>
+          </svg>
+        </button>
+        <button id="sidebar-refresh" type="button" title="Refresh snapshot list" aria-label="Refresh snapshot list">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 3 v4 h-4"/>
+            <path d="M2 13 v-4 h4"/>
+            <path d="M13.5 7 A6 6 0 0 0 3 5.5"/>
+            <path d="M2.5 9 A6 6 0 0 0 13 10.5"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <div id="sidebar-toast" hidden></div>
     <div id="file-list">
@@ -342,6 +351,11 @@
       </div>
       <button id="clear-focus-btn" type="button" disabled>Clear focus</button>
       <span id="focus-summary"></span>
+    </div>
+
+    <div id="task-search-wrap" style="display:inline-flex;align-items:center;gap:6px;margin-left:12px;">
+      <label for="task-search" style="font-size:12px;color:#94a3b8;">Search:</label>
+      <input id="task-search" type="search" placeholder="Filter tasks…" style="background:#1e293b;color:#e2e8f0;border:1px solid #334155;padding:5px 10px;border-radius:4px;font-size:12px;min-width:180px;">
     </div>
 
     <!-- Right-side action cluster: undo, reset, sync menu, user menu -->
@@ -505,6 +519,10 @@
       // first-added (secondary) = 1 - alpha.
       var _focusFilter = { field: '', value: '', values: [], alpha: 1.0 };
 
+      // Search-field dim state. Substring query (lowercased) applied post-render
+      // via _applyCrossfadeOpacity, which composes with focus/crossfade.
+      var _searchQuery = '';
+
       // Related-Tasks focus mode (shift-click a bar to enter).
       //   rootId: id of the task the focus was pivoted on
       //   ids:    Set<string> of tasks in the connected component (includes root)
@@ -563,6 +581,12 @@
             return _changeLog ? _changeLog.exportMarkdown() : '';
           }
         });
+        // Read-only accessors for the snapshot controller in the Phase C
+        // IIFE (which lives in a separate closure).  Both return the
+        // in-memory simulator state needed to build a "current-state"
+        // payload for POST /.netlify/functions/snapshot.
+        window.__PPGANTT_ORIGINAL_JSON__ = function () { return _originalJson; };
+        window.__PPGANTT_ACTIVE_SCHEDULE__ = function () { return _activeSchedule; };
       }
 
       function _showExportFallback(md, reason) {
@@ -826,37 +850,62 @@
       // Apply per-bar opacity when exactly 2 sub-values are selected.
       // With 1 selected: full opacity (filter already hid the rest).
       // With 2 selected: last-added = primary (alpha), first-added = secondary (1-alpha).
+      // The search query (if any) multiplies in on top — non-matching rows dim
+      // to 0.15 * focusOpacity so a search overlays a crossfade cleanly.
       function _applyCrossfadeOpacity() {
         var container = document.getElementById('gantt-container');
         if (!container) return;
         var wrappers = container.querySelectorAll('.bar-wrapper');
+        var query = (_searchQuery || '').trim().toLowerCase();
+        var hasFocus = !!(_focusFilter.field && _focusFilter.values.length === 2);
 
-        if (!_focusFilter.field || _focusFilter.values.length !== 2) {
+        if (!hasFocus && !query) {
           wrappers.forEach(function (w) { w.style.opacity = ''; });
           return;
         }
 
-        var secondary = _focusFilter.values[0]; // first-added, dims as alpha ↑
-        var primary = _focusFilter.values[1];   // last-added, brightens as alpha ↑
+        var secondary = hasFocus ? _focusFilter.values[0] : null;
+        var primary = hasFocus ? _focusFilter.values[1] : null;
         var alpha = _focusFilter.alpha;
-        var primaryOpacity = alpha;
-        var secondaryOpacity = 1 - alpha;
 
         wrappers.forEach(function (wrapper) {
           var id = wrapper.getAttribute('data-id');
           var task = _findTaskInActive(id);
           if (!task) return;
-          var v = _getTaskMetaValue(task, _focusFilter.field);
-          if (v === primary) {
-            wrapper.style.opacity = primaryOpacity.toFixed(3);
-          } else if (v === secondary) {
-            wrapper.style.opacity = secondaryOpacity.toFixed(3);
+
+          // Step 1: base opacity from focus/crossfade, or 1.0 when no focus.
+          var base = 1.0;
+          if (hasFocus) {
+            var v = _getTaskMetaValue(task, _focusFilter.field);
+            if (v === primary) base = alpha;
+            else if (v === secondary) base = 1 - alpha;
+            else base = 0;
+          }
+
+          // Step 2: search mask. Non-match → dim to 0.15×, match → untouched.
+          if (query) {
+            var match = _taskMatchesSearch(task, query);
+            if (!match) base = base * 0.15;
+          }
+
+          if (!hasFocus && !query) {
+            wrapper.style.opacity = '';
           } else {
-            // Shouldn't reach here — _filterTasks already removed these —
-            // but belt-and-suspenders in case a future code path bypasses it.
-            wrapper.style.opacity = '0';
+            wrapper.style.opacity = base.toFixed(3);
           }
         });
+      }
+
+      // Case-insensitive substring match against name + meta.owner + meta.status.
+      function _taskMatchesSearch(task, query) {
+        if (!task || !query) return true;
+        var parts = [];
+        if (task.name) parts.push(String(task.name));
+        var meta = task.meta || {};
+        if (meta.owner) parts.push(String(meta.owner));
+        if (meta.status) parts.push(String(meta.status));
+        var hay = parts.join(' \u00B7 ').toLowerCase();
+        return hay.indexOf(query) !== -1;
       }
 
       // Keep the toolbar slider in sync with _focusFilter.alpha and the
@@ -1883,14 +1932,21 @@
         else { dialog.setAttribute('open', 'open'); }
       }
 
-      function _ppgReloadData() {
-        // Re-fetch the current slug's JSON. PPGanttLoader.loadFile uses the
-        // /api/data/<slug>.json endpoint which the Supabase gate's fetch
-        // override rewrites to the Netlify Function with the bearer token.
+      function _ppgReloadData(opts) {
+        // On gated routes, the source of truth for viewer data is the
+        // snapshot list (ppgantt.snapshots in Supabase).  We delegate to
+        // the snapshot controller — it fetches the list, picks the target
+        // snapshot, and calls renderFromJson() with the payload.
+        //
+        // On non-gated routes (public demo / local fixtures), preserve the
+        // legacy behaviour of re-reading the slug's JSON via PPGanttLoader.
+        opts = opts || {};
         var slug = window.__PPGANTT_SLUG__;
+        if (slug && window.PPGanttSnapshots && window.PPGanttSnapshots.reload) {
+          return window.PPGanttSnapshots.reload(opts);
+        }
         var filename = slug ? (slug + '.json') : (_originalJson && _originalJson.source && _originalJson.source.filename) || null;
         if (!filename && _originalJson && _originalJson.source) {
-          // Try the source's stored filename as last resort.
           filename = _originalJson.source.filename || null;
         }
         if (!window.PPGanttLoader || !window.PPGanttLoader.loadFile || !filename) {
@@ -1924,6 +1980,42 @@
         });
       }
 
+      // Helper: GET a Netlify Function with the current Supabase JWT
+      // attached.  Same rationale as _ppgAuthPost: the supabase-gate.js
+      // fetch override only rewrites /api/data/<slug>.json URLs; direct
+      // hits to /.netlify/functions/* otherwise go out unauthenticated.
+      async function _ppgAuthGet(url) {
+        var sb = window.__PPGANTT_SUPABASE__;
+        if (!sb) throw new Error('Supabase client unavailable — not on a gated route?');
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) throw new Error('No active Supabase session.');
+        return fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': 'Bearer ' + session.access_token,
+          },
+          credentials: 'same-origin',
+        });
+      }
+
+      // Helper: DELETE a Netlify Function with the current Supabase JWT
+      // attached.  Sibling of _ppgAuthPost / _ppgAuthGet — same rationale.
+      async function _ppgAuthDelete(url) {
+        var sb = window.__PPGANTT_SUPABASE__;
+        if (!sb) throw new Error('Supabase client unavailable — not on a gated route?');
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) throw new Error('No active Supabase session.');
+        return fetch(url, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': 'Bearer ' + session.access_token,
+          },
+          credentials: 'same-origin',
+        });
+      }
+
       async function _pullFromNotion() {
         var btn = document.getElementById('pull-from-notion-btn');
         var slug = window.__PPGANTT_SLUG__;
@@ -1932,6 +2024,22 @@
           return;
         }
         _ppgSetBusy(btn, true, 'Pulling...');
+        // Spin the sync icon + prepend a ghost card to the sidebar.
+        var syncBtn = document.getElementById('sync-menu-btn');
+        if (syncBtn) syncBtn.classList.add('is-spinning');
+        var pullStartedAt = Date.now();
+        var ghostTicker = null;
+        if (window.PPGanttSnapshots && window.PPGanttSnapshots.showGhost) {
+          try { window.PPGanttSnapshots.showGhost('Pulling from Notion...'); } catch (_) { /* ignore */ }
+          // Update the ghost label every second with elapsed seconds so the
+          // user has a rough sense of progress (the fetch itself is opaque).
+          ghostTicker = setInterval(function () {
+            var secs = Math.round((Date.now() - pullStartedAt) / 1000);
+            if (window.PPGanttSnapshots && window.PPGanttSnapshots.updateGhost) {
+              try { window.PPGanttSnapshots.updateGhost('Pulling from Notion... ' + secs + 's'); } catch (_) {}
+            }
+          }, 1000);
+        }
         try {
           var res = await _ppgAuthPost('/.netlify/functions/pull-from-notion', { slug: slug });
           var data = null;
@@ -1941,9 +2049,12 @@
             _ppgToast('Pull failed: ' + msg, 'error');
             return;
           }
-          // Reload the viewer so new sync_status values paint on the rows.
+          // Reload the viewer so the new snapshot is selected and rendered.
+          // The pull response now includes snapshotId — hand it to the
+          // snapshot controller so it auto-selects that specific row rather
+          // than "first in list" (in case two pulls race).
           try {
-            await _ppgReloadData();
+            await _ppgReloadData({ selectSnapshotId: data && data.snapshotId });
           } catch (reloadErr) {
             console.warn('[PPGantt] pull succeeded but reload failed:', reloadErr);
           }
@@ -1955,14 +2066,13 @@
           _ppgToast('Pull from Notion failed: ' + (err && err.message ? err.message : err), 'error');
         } finally {
           _ppgSetBusy(btn, false);
+          if (syncBtn) syncBtn.classList.remove('is-spinning');
+          if (ghostTicker) { clearInterval(ghostTicker); ghostTicker = null; }
+          if (window.PPGanttSnapshots && window.PPGanttSnapshots.hideGhost) {
+            try { window.PPGanttSnapshots.hideGhost(); } catch (_) { /* ignore */ }
+          }
         }
       }
-
-      // Chunk size for the push loop.  At ~3 req/sec to Notion + read-back
-      // verification + Supabase UPDATE, realistic per-row is ~600ms.  20 rows
-      // is well under the 30s Lambda budget with a generous safety margin,
-      // and keeps progress feedback meaningful ("Pushing 20/69...").
-      var _PPG_PUSH_CHUNK_SIZE = 20;
 
       async function _pushToNotion() {
         var btn = document.getElementById('push-to-notion-btn');
@@ -1971,79 +2081,59 @@
           alert('Push to Notion is only available on gated team routes (e.g. /societist). Use "Export changes" for the clipboard workflow instead.');
           return;
         }
-        // Build the full list of pushable notion_page_ids upfront so we can
-        // slice into chunks that the server will push deterministically.
-        // Pushable = notion_sync_status IN ('clean', 'local_ahead').  Without
-        // an explicit id list the server picks its own "first N pushable",
-        // which would re-push the same rows every chunk.
-        var tasks = (_originalJson && _originalJson.tasks) || [];
-        var pushableIds = [];
-        for (var i = 0; i < tasks.length; i++) {
-          var meta = tasks[i] && tasks[i].meta;
-          var status = meta && meta.notion_sync_status;
-          var nid = meta && meta.notion_page_id;
-          if (!nid) continue;
-          if (status === 'clean' || status === 'local_ahead' || !status) {
-            pushableIds.push(nid);
-          }
-        }
-        var pushable = pushableIds.length;
-        if (pushable === 0) {
-          _ppgToast('No clean or local-ahead tasks to push.', 'error');
+        // The snapshot system is the source of truth for what gets pushed.
+        // The selected snapshot's payload IS the push.  No chunking, no
+        // per-row id list — the server reads the snapshot it's given and
+        // pushes every pushable row in it (single Lambda invocation).
+        var snapshotId = window.PPGanttSnapshots && window.PPGanttSnapshots.getSelectedId
+          ? window.PPGanttSnapshots.getSelectedId()
+          : null;
+        if (!snapshotId) {
+          _ppgToast('Select a snapshot in the sidebar before pushing.', 'error');
           return;
         }
-        var chunkCount = Math.ceil(pushable / _PPG_PUSH_CHUNK_SIZE);
-        var prompt =
-          'Push ' + pushable + ' change' + (pushable === 1 ? '' : 's') + ' to Notion?';
-        if (chunkCount > 1) {
-          prompt += ' (will run in ' + chunkCount + ' batches of up to ' + _PPG_PUSH_CHUNK_SIZE + ')';
-        }
-        if (!confirm(prompt)) {
-          return;
-        }
+        var prompt = 'Push this snapshot to Notion?';
+        if (!confirm(prompt)) return;
+
         _ppgSetBusy(btn, true, 'Pushing...');
-        var totalVerified = 0;
-        var totalFailed = 0;
-        var failureMessages = [];
         try {
-          for (var chunkIdx = 0; chunkIdx < chunkCount; chunkIdx++) {
-            var start = chunkIdx * _PPG_PUSH_CHUNK_SIZE;
-            var end = Math.min(start + _PPG_PUSH_CHUNK_SIZE, pushable);
-            var chunkIds = pushableIds.slice(start, end);
-            _ppgSetBusy(btn, true, 'Pushing ' + end + '/' + pushable + '...');
-            var res = await _ppgAuthPost('/.netlify/functions/push-to-notion', {
-              slug: slug,
-              notion_page_ids: chunkIds,
-            });
-            var data = null;
-            try { data = await res.json(); } catch (_) { /* non-JSON */ }
-            if (!res.ok) {
-              var msg = (data && data.error) || ('HTTP ' + res.status);
-              failureMessages.push('Batch ' + (chunkIdx + 1) + ': ' + msg);
-              totalFailed += chunkIds.length;
-              // Don't abort — later batches may still succeed.  We report
-              // per-batch failures in the summary toast.
-              continue;
-            }
-            var verified = data.verifiedCount != null ? data.verifiedCount : (data.rowsWritten || 0);
-            var failed = data.failedCount != null ? data.failedCount : (data.rowsFailed || 0);
-            totalVerified += verified;
-            totalFailed += failed;
+          var res = await _ppgAuthPost('/.netlify/functions/push-to-notion', {
+            slug: slug,
+            snapshot_id: snapshotId,
+            // is_final_chunk defaults to true when omitted.  We send true
+            // explicitly so the snapshot flips from 'snapshot'|'import' →
+            // 'pushed' on the server.
+            is_final_chunk: true,
+          });
+          var data = null;
+          try { data = await res.json(); } catch (_) { /* non-JSON */ }
+          if (!res.ok) {
+            var msg = (data && data.error) || ('HTTP ' + res.status);
+            _ppgToast('Push failed: ' + msg, 'error');
+            return;
           }
-          try { await _ppgReloadData(); }
-          catch (reloadErr) { console.warn('[PPGantt] push succeeded but reload failed:', reloadErr); }
-          var summary = 'Pushed ' + totalVerified + ' task' + (totalVerified === 1 ? '' : 's');
-          if (totalFailed > 0) summary += ' \u00B7 ' + totalFailed + ' failed';
-          _ppgToast(summary, totalFailed > 0 ? 'error' : 'success');
-          if (failureMessages.length > 0) {
-            console.warn('[PPGantt] push batch failures:', failureMessages);
+          var verified = data && data.verifiedCount != null ? data.verifiedCount : ((data && data.rowsWritten) || 0);
+          var failed = data && data.failedCount != null ? data.failedCount : ((data && data.rowsFailed) || 0);
+          var summary = 'Pushed ' + verified + ' task' + (verified === 1 ? '' : 's');
+          if (failed > 0) summary += ' \u00B7 ' + failed + ' failed';
+          if (data && data.snapshotFlipped === false && data.snapshotFlipFailed) {
+            summary += ' \u00B7 snapshot flip failed';
           }
-          // The old flow cleared the local simulation change log after a
-          // successful push. Preserve that behaviour — the server has
-          // accepted these edits, so any queued client-side changes are now
-          // moot. Only clear if the push was fully successful across ALL
-          // chunks (zero failures).
-          if (totalFailed === 0 && _changeLog && _changeLog.hasChanges && _changeLog.hasChanges()) {
+          _ppgToast(summary, failed > 0 ? 'error' : 'success');
+
+          // Refresh the sidebar so the pushed snapshot's card re-renders
+          // with the green PUSHED pill.  Keep the same row selected.
+          try {
+            await _ppgReloadData({ selectSnapshotId: snapshotId });
+          } catch (reloadErr) {
+            console.warn('[PPGantt] push succeeded but reload failed:', reloadErr);
+          }
+
+          // Post-push, the snapshot is now the authoritative state in
+          // Notion.  Any in-memory simulator edits are moot (they were
+          // baked into this snapshot, or are orphaned against a different
+          // snapshot).  Clear the change log + simulator ghosts.
+          if (failed === 0 && _changeLog && _changeLog.hasChanges && _changeLog.hasChanges()) {
             try { _changeLog.replaceEvents([]); } catch (_) { /* ignore */ }
             _updateSimStatus();
           }
@@ -2095,8 +2185,15 @@
         function _syncSlugButtons() {
           if (!window.__PPGANTT_SLUG__) return;
           if (pushBtn) {
-            pushBtn.disabled = false;
-            pushBtn.title = 'Write changes directly to the Notion roadmap (stamps Last Updated By + Last Sync)';
+            // Push is gated on both (a) being on a slug route AND (b) a
+            // snapshot being selected.  Re-check selected-id each time; the
+            // ppgantt:snapshot-selected custom event below re-fires this
+            // helper whenever the selection changes.
+            var hasSelection = !!(window.PPGanttSnapshots && window.PPGanttSnapshots.getSelectedId && window.PPGanttSnapshots.getSelectedId());
+            pushBtn.disabled = !hasSelection;
+            pushBtn.title = hasSelection
+              ? 'Push the selected snapshot to Notion'
+              : 'Select a snapshot in the sidebar to enable push';
           }
           if (pullBtn) {
             pullBtn.disabled = false;
@@ -2105,6 +2202,7 @@
         }
         _syncSlugButtons();
         document.addEventListener('ppgantt:slug-ready', _syncSlugButtons);
+        document.addEventListener('ppgantt:snapshot-selected', _syncSlugButtons);
         if (pushBtn) pushBtn.addEventListener('click', _pushToNotion);
         if (pullBtn) pullBtn.addEventListener('click', _pullFromNotion);
         if (monthLayoutBtn) {
@@ -2135,6 +2233,22 @@
             focusField.value = '';
             _syncFocusValueOptions();
             _renderActiveSchedule();
+          });
+        }
+        // Task search — live-dim non-matching bars. Composes with focus/crossfade
+        // via _applyCrossfadeOpacity. Escape key clears the query.
+        var searchInput = document.getElementById('task-search');
+        if (searchInput) {
+          searchInput.addEventListener('input', function () {
+            _searchQuery = searchInput.value || '';
+            _applyCrossfadeOpacity();
+          });
+          searchInput.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') {
+              searchInput.value = '';
+              _searchQuery = '';
+              _applyCrossfadeOpacity();
+            }
           });
         }
         if (exportCloseBtn && exportDialog) {
@@ -2300,6 +2414,27 @@
         }
         function _refreshManifest() {
           if (!refreshBtn) return;
+          // On gated slug routes the sidebar lists snapshots, not files.
+          // Delegate the refresh to the snapshot controller so it re-fetches
+          // /.netlify/functions/list-snapshots and re-renders cards.
+          if (window.__PPGANTT_SLUG__ && window.PPGanttSnapshots && window.PPGanttSnapshots.refreshList) {
+            refreshBtn.classList.add('is-spinning');
+            refreshBtn.disabled = true;
+            Promise.resolve(window.PPGanttSnapshots.refreshList())
+              .then(function (list) {
+                var n = (list && list.length) || 0;
+                _showToast('Snapshots refreshed — ' + n);
+              })
+              .catch(function (err) {
+                console.error('[PPGantt] snapshot refresh failed:', err);
+                _showToast('Refresh failed: ' + (err && err.message ? err.message : err), true);
+              })
+              .then(function () {
+                refreshBtn.classList.remove('is-spinning');
+                refreshBtn.disabled = false;
+              });
+            return;
+          }
           refreshBtn.classList.add('is-spinning');
           refreshBtn.disabled = true;
           fetch('/api/refresh-manifest', { method: 'POST' })
@@ -2400,29 +2535,16 @@
             });
         }
         if (isGatedSlugRoute) {
-          // On gated routes, supabase-gate.js must finish installing its
-          // fetch() override AND setting __PPGANTT_SLUG__ before we load
-          // data — otherwise the loader hits /api/manifest via native fetch,
-          // falls through to static data/_manifest.json (Notion-era), and
-          // renders stale data.
+          // On gated routes, the snapshot sidebar controller (Phase C IIFE
+          // below) owns data loading.  It fetches the snapshot list from
+          // Supabase and calls renderFromJson() with the payload of the
+          // most recent row.  We intentionally DO NOT kick the legacy
+          // _loadInitialData() path here: that would race the snapshot
+          // controller, potentially painting stale task data.
           //
-          // Three cases to handle:
-          //   (a) Gate already finished before DOMContentLoaded (fast
-          //       connections / cached ESM import).  __PPGANTT_SLUG__ set →
-          //       load immediately.
-          //   (b) Gate still pending → listen for ppgantt:slug-ready.
-          //   (c) Gate broken (network down, import error) → 5s safety net
-          //       loads anyway so the viewer isn't blank forever.
-          var started = false;
-          function kick() { if (started) return; started = true; startLoad(); }
-          if (window.__PPGANTT_SLUG__) {
-            // Case (a): gate already ran, override is installed, slug set.
-            kick();
-          } else {
-            // Case (b) + (c)
-            document.addEventListener('ppgantt:slug-ready', kick, { once: true });
-            setTimeout(kick, 5000);
-          }
+          // The Phase C IIFE waits for ppgantt:slug-ready itself, so we
+          // don't need to coordinate timing from this file.
+          return;
         } else {
           startLoad();
         }
@@ -2780,17 +2902,562 @@
 
       window.PPGanttApp = Object.assign({}, window.PPGanttApp || {});
 
-      // ─── Init: load manifest on DOMContentLoaded ────────────────────
+      // ═══════════════════════════════════════════════════════════════
+      // Snapshot controller (gated-slug route only)
+      // ═══════════════════════════════════════════════════════════════
+      //
+      // Replaces the file-list sidebar with a snapshot-list sidebar on
+      // gated routes.  The snapshot list is sourced from
+      // /.netlify/functions/list-snapshots; clicking a card fetches its
+      // full payload via /.netlify/functions/snapshot?id=... and renders
+      // it via window.PPGanttApp.renderFromJson.
+      //
+      // Exposes window.PPGanttSnapshots for the bootstrap IIFE:
+      //   .reload(opts)        → re-fetch list, auto-select (replaces the
+      //                          legacy _ppgReloadData behaviour)
+      //   .refreshList()       → re-fetch list only, keep selection
+      //   .getSelectedId()     → uuid of the currently-selected snapshot
+      //   .createSnapshot()    → POST a new snapshot from the current
+      //                          viewer state (button handler)
+      // ──────────────────────────────────────────────────────────────
+
+      var _snapshots = [];          // Array of snapshot summaries (no payload)
+      var _selectedSnapshotId = null;
+
+      async function _authGetSnapshots(url) {
+        // Local helper: GET with Supabase JWT header. Duplicated from the
+        // bootstrap IIFE's _ppgAuthGet so this IIFE is self-contained.
+        var sb = window.__PPGANTT_SUPABASE__;
+        if (!sb) throw new Error('Supabase client unavailable — not on a gated route?');
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) throw new Error('No active Supabase session.');
+        return fetch(url, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer ' + session.access_token },
+          credentials: 'same-origin',
+        });
+      }
+
+      async function _authPostSnapshots(url, body) {
+        var sb = window.__PPGANTT_SUPABASE__;
+        if (!sb) throw new Error('Supabase client unavailable — not on a gated route?');
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) throw new Error('No active Supabase session.');
+        return fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + session.access_token,
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+      }
+
+      async function _authDeleteSnapshots(url) {
+        var sb = window.__PPGANTT_SUPABASE__;
+        if (!sb) throw new Error('Supabase client unavailable — not on a gated route?');
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) throw new Error('No active Supabase session.');
+        return fetch(url, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + session.access_token },
+          credentials: 'same-origin',
+        });
+      }
+
+      function _relTimestamp(iso) {
+        if (!iso) return '';
+        var then = new Date(iso);
+        if (isNaN(then.getTime())) return '';
+        var now = new Date();
+        var diffMs = now.getTime() - then.getTime();
+        var diffSec = Math.round(diffMs / 1000);
+        if (diffSec < 60) return 'just now';
+        var diffMin = Math.round(diffSec / 60);
+        if (diffMin < 60) return diffMin + 'm ago';
+        var diffHr = Math.round(diffMin / 60);
+        if (diffHr < 24) return diffHr + 'h ago';
+        // Compare calendar-day offset (local time) for "today"/"yesterday"
+        var y1 = then.getFullYear();
+        var m1 = then.getMonth();
+        var d1 = then.getDate();
+        var y2 = now.getFullYear();
+        var m2 = now.getMonth();
+        var d2 = now.getDate();
+        var thenDay = new Date(y1, m1, d1).getTime();
+        var nowDay = new Date(y2, m2, d2).getTime();
+        var dayDiff = Math.round((nowDay - thenDay) / 86400000);
+        if (dayDiff === 0) return 'today';
+        if (dayDiff === 1) return 'yesterday';
+        if (dayDiff < 7) return dayDiff + 'd ago';
+        // Fall through to absolute date for anything older
+        var pad = function (n) { return String(n).padStart(2, '0'); };
+        return y1 + '-' + pad(m1 + 1) + '-' + pad(d1);
+      }
+
+      // Absolute local-time string for IMPORT card labels. Matches the
+      // backend's "YY-MM-DD HH:MM" shape but in the browser's timezone so
+      // what the user reads lines up with their wall clock.
+      function _localTimestamp(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        var pad = function (n) { return String(n).padStart(2, '0'); };
+        var yy = String(d.getFullYear()).slice(-2);
+        return yy + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+               ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+      }
+
+      function _emitSelected() {
+        try {
+          document.dispatchEvent(new CustomEvent('ppgantt:snapshot-selected', {
+            detail: { snapshotId: _selectedSnapshotId },
+          }));
+        } catch (_) { /* CustomEvent unavailable — ignore */ }
+      }
+
+      function _buildSnapshotSidebar(snapshots) {
+        var listEl = document.getElementById('file-list');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+
+        if (!snapshots || snapshots.length === 0) {
+          var empty = document.createElement('div');
+          empty.className = 'snapshot-empty';
+          empty.textContent =
+            'No snapshots yet. Use the sync menu (top-right) to "Pull from Notion" and get started.';
+          listEl.appendChild(empty);
+          return;
+        }
+
+        snapshots.forEach(function (snap) {
+          var card = document.createElement('div');
+          var kind = (snap.kind || 'snapshot').toLowerCase();
+          var kindClass = 'kind-' + kind;
+          card.className = 'snapshot-card ' + kindClass;
+          card.setAttribute('data-snapshot-id', snap.id);
+          if (snap.id === _selectedSnapshotId) card.classList.add('is-selected');
+
+          var kindLabel = kind.toUpperCase();
+          var label = snap.label || ('Untitled ' + kindLabel.toLowerCase());
+          // The backend stamps IMPORT labels as "Notion pull YY-MM-DD HH:MM"
+          // in UTC (no timezone context on the server). Re-format client-side
+          // into the user's local timezone so the label matches the wall clock.
+          if (kind === 'import' && typeof label === 'string' &&
+              label.indexOf('Notion pull') === 0 && snap.created_at) {
+            var localStr = _localTimestamp(snap.created_at);
+            if (localStr) label = 'Notion pull ' + localStr;
+          }
+          var created = _relTimestamp(snap.created_at);
+          var metaHtml = _escHtml(created);
+          if (kind === 'pushed' && snap.pushed_at) {
+            metaHtml += '<span class="pushed-tag">pushed ' + _escHtml(_relTimestamp(snap.pushed_at)) + '</span>';
+          }
+
+          // Owner initials badge. Backend returns `created_by_initials`
+          // (from public.profiles.initials). Falls back to "?" when
+          // unknown so every card has a badge in the same spot.
+          var initials = snap.created_by_initials || '?';
+          var initialsHtml =
+            '<span class="snapshot-owner-badge" title="Created by">' +
+              _escHtml(initials) +
+            '</span>';
+
+          card.innerHTML =
+            '<div class="snapshot-card-row">' +
+              '<span class="snapshot-kind-pill ' + kindClass + '">' + _escHtml(kindLabel) + '</span>' +
+              initialsHtml +
+              '<span class="snapshot-card-label">' + _escHtml(label) + '</span>' +
+              '<button class="snapshot-delete" type="button" aria-label="Delete snapshot" title="Delete snapshot">' +
+                '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4 L12 12"/><path d="M12 4 L4 12"/></svg>' +
+              '</button>' +
+            '</div>' +
+            '<div class="snapshot-card-meta">' + metaHtml + '</div>';
+
+          // Delete button — stopPropagation so the card-click handler
+          // doesn't also fire.
+          var delBtn = card.querySelector('.snapshot-delete');
+          if (delBtn) {
+            delBtn.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              _handleDeleteSnapshot(snap);
+            });
+          }
+
+          // Card body click = select this snapshot.
+          card.addEventListener('click', function () {
+            _handleSelectSnapshot(snap.id);
+          });
+
+          listEl.appendChild(card);
+        });
+      }
+
+      // Ghost card shown while a Notion pull is in flight. Prepended to the
+      // snapshot list; removed in the pull's finally block. Non-interactive.
+      function _showGhostCard(label) {
+        var listEl = document.getElementById('file-list');
+        if (!listEl) return;
+        // If a ghost is already present, just update its label.
+        var existing = listEl.querySelector('.snapshot-card.is-ghost');
+        if (existing) {
+          _updateGhostCard(label);
+          return;
+        }
+        // Remove any empty-state placeholder so the ghost has a list to live in.
+        var empty = listEl.querySelector('.snapshot-empty');
+        if (empty) empty.remove();
+        var card = document.createElement('div');
+        card.className = 'snapshot-card kind-import is-ghost';
+        card.innerHTML =
+          '<div class="snapshot-card-row">' +
+            '<span class="snapshot-kind-pill kind-import">IMPORT</span>' +
+            '<span class="snapshot-card-label ghost-label">' + _escHtml(label || 'Pulling from Notion...') + '</span>' +
+          '</div>';
+        if (listEl.firstChild) {
+          listEl.insertBefore(card, listEl.firstChild);
+        } else {
+          listEl.appendChild(card);
+        }
+      }
+
+      function _updateGhostCard(label) {
+        var listEl = document.getElementById('file-list');
+        if (!listEl) return;
+        var lbl = listEl.querySelector('.snapshot-card.is-ghost .ghost-label');
+        if (lbl) lbl.textContent = label || '';
+      }
+
+      function _hideGhostCard() {
+        var listEl = document.getElementById('file-list');
+        if (!listEl) return;
+        var ghost = listEl.querySelector('.snapshot-card.is-ghost');
+        if (ghost) ghost.remove();
+      }
+
+      function _isDirty() {
+        // The "dirty" signal is the presence of unsaved changes in the
+        // simulator/change-log layer.  _changeLog lives in the bootstrap
+        // IIFE; PPGanttApp.hasChanges() is the public accessor.
+        return !!(window.PPGanttApp && window.PPGanttApp.hasChanges && window.PPGanttApp.hasChanges());
+      }
+
+      function _syncSaveSnapshotBtn() {
+        var btn = document.getElementById('save-snapshot-btn');
+        if (!btn) return;
+        if (!window.__PPGANTT_SLUG__) {
+          btn.hidden = true;
+          btn.disabled = true;
+          return;
+        }
+        btn.hidden = false;
+        btn.disabled = !_isDirty();
+        btn.title = _isDirty()
+          ? 'Save the current viewer state as a new snapshot'
+          : 'No unsaved edits to save';
+      }
+
+      async function _handleSelectSnapshot(snapshotId) {
+        if (!snapshotId) return;
+        if (_selectedSnapshotId === snapshotId) return;
+
+        if (_isDirty()) {
+          var proceed = confirm('Discard unsaved edits and switch to this snapshot?');
+          if (!proceed) return;
+          // User confirmed — discard any local simulation before load.
+          if (window.PPGanttApp && window.PPGanttApp.resetSimulation) {
+            try { window.PPGanttApp.resetSimulation(); } catch (_) { /* ignore */ }
+          }
+        }
+
+        try {
+          await _loadAndRenderSnapshot(snapshotId);
+        } catch (err) {
+          _showError('Failed to load snapshot: ' + (err && err.message ? err.message : err));
+        }
+      }
+
+      async function _loadAndRenderSnapshot(snapshotId) {
+        var res = await _authGetSnapshots('/.netlify/functions/snapshot?id=' + encodeURIComponent(snapshotId));
+        if (!res.ok) {
+          var msg = 'HTTP ' + res.status;
+          try { var body = await res.json(); if (body && body.error) msg = body.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        var row = await res.json();
+        if (!row || !row.payload) throw new Error('Snapshot has no payload');
+        _selectedSnapshotId = snapshotId;
+        _updateSelectedCardChrome();
+        _emitSelected();
+        if (window.PPGanttApp && window.PPGanttApp.renderFromJson) {
+          window.PPGanttApp.renderFromJson(row.payload);
+        }
+        _syncSaveSnapshotBtn();
+        return row;
+      }
+
+      function _updateSelectedCardChrome() {
+        var cards = document.querySelectorAll('.snapshot-card');
+        cards.forEach(function (c) {
+          if (c.getAttribute('data-snapshot-id') === _selectedSnapshotId) {
+            c.classList.add('is-selected');
+          } else {
+            c.classList.remove('is-selected');
+          }
+        });
+      }
+
+      async function _handleDeleteSnapshot(snap) {
+        var label = snap.label || 'this snapshot';
+        if (!confirm('Delete snapshot "' + label + '"? This cannot be undone.')) return;
+        try {
+          var res = await _authDeleteSnapshots('/.netlify/functions/snapshot?id=' + encodeURIComponent(snap.id));
+          if (!res.ok) {
+            var msg = 'HTTP ' + res.status;
+            try { var body = await res.json(); if (body && body.error) msg = body.error; } catch (_) {}
+            _showError('Delete failed: ' + msg);
+            return;
+          }
+          var wasSelected = (snap.id === _selectedSnapshotId);
+          if (wasSelected) _selectedSnapshotId = null;
+          // Refresh the list.  If the deleted card was selected, auto-pick
+          // the next most recent after the refresh lands.
+          await _fetchSnapshotList();
+          if (wasSelected && _snapshots.length > 0) {
+            await _loadAndRenderSnapshot(_snapshots[0].id);
+          } else {
+            _buildSnapshotSidebar(_snapshots);
+            _emitSelected();
+          }
+        } catch (err) {
+          _showError('Delete failed: ' + (err && err.message ? err.message : err));
+        }
+      }
+
+      async function _fetchSnapshotList() {
+        var slug = window.__PPGANTT_SLUG__;
+        if (!slug) { _snapshots = []; return _snapshots; }
+        var res = await _authGetSnapshots('/.netlify/functions/list-snapshots?slug=' + encodeURIComponent(slug));
+        if (!res.ok) {
+          var msg = 'HTTP ' + res.status;
+          try { var body = await res.json(); if (body && body.error) msg = body.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        var body2 = await res.json();
+        _snapshots = (body2 && body2.snapshots) || [];
+        return _snapshots;
+      }
+
+      async function _reloadSnapshots(opts) {
+        opts = opts || {};
+        await _fetchSnapshotList();
+        _buildSnapshotSidebar(_snapshots);
+
+        if (_snapshots.length === 0) {
+          // Empty state — no selection, nothing to render.  The viewer may
+          // already be showing a stale render; leave it alone rather than
+          // blanking (reduces flicker when deletes cascade).
+          _selectedSnapshotId = null;
+          _emitSelected();
+          _syncSaveSnapshotBtn();
+          return;
+        }
+
+        var targetId = opts.selectSnapshotId || null;
+        if (targetId) {
+          var exists = _snapshots.some(function (s) { return s.id === targetId; });
+          if (!exists) targetId = null;
+        }
+        if (!targetId && _selectedSnapshotId) {
+          // Preserve existing selection if that row still exists.
+          var stillThere = _snapshots.some(function (s) { return s.id === _selectedSnapshotId; });
+          if (stillThere) targetId = _selectedSnapshotId;
+        }
+        if (!targetId) {
+          targetId = _snapshots[0].id; // most recent
+        }
+        await _loadAndRenderSnapshot(targetId);
+      }
+
+      async function _handleSaveSnapshot() {
+        var slug = window.__PPGANTT_SLUG__;
+        if (!slug) return;
+        var btn = document.getElementById('save-snapshot-btn');
+        if (btn && btn.disabled) return;
+
+        // Assemble a viewer-shape payload from the currently-selected
+        // snapshot overlaid with the simulator's active schedule.  The
+        // simulator only touches start/end dates (and optionally progress
+        // via click-to-push dialogs), so a task-level overlay keeps every
+        // other field (meta, dependencies, phase, stream) intact.
+        var basePayload = null;
+        if (_selectedSnapshotId) {
+          try {
+            var res = await _authGetSnapshots('/.netlify/functions/snapshot?id=' + encodeURIComponent(_selectedSnapshotId));
+            if (res.ok) {
+              var row = await res.json();
+              if (row && row.payload) basePayload = row.payload;
+            }
+          } catch (_) { /* fall through to app-side base */ }
+        }
+        // Fallback if fetch failed or no selection: ask PPGanttApp for a
+        // fresh pristine payload.  __PPGANTT_ORIGINAL_JSON__ is exposed
+        // below as a best-effort accessor.
+        if (!basePayload && window.__PPGANTT_ORIGINAL_JSON__) {
+          basePayload = window.__PPGANTT_ORIGINAL_JSON__();
+        }
+        if (!basePayload) {
+          _showError('Cannot save: no base payload available.');
+          return;
+        }
+
+        // Overlay current schedule onto basePayload.tasks.
+        var currentTasks = (window.__PPGANTT_ACTIVE_SCHEDULE__ && window.__PPGANTT_ACTIVE_SCHEDULE__()) || null;
+        var overlayPayload = JSON.parse(JSON.stringify(basePayload));
+        if (currentTasks && Array.isArray(overlayPayload.tasks)) {
+          var byId = {};
+          currentTasks.forEach(function (t) { if (t && t.id) byId[t.id] = t; });
+          overlayPayload.tasks = overlayPayload.tasks.map(function (t) {
+            var curr = byId[t.id];
+            if (!curr) return t;
+            // Only overlay the fields the simulator actually mutates.
+            var merged = Object.assign({}, t);
+            if (curr.start) merged.start = curr.start;
+            if (curr.end) merged.end = curr.end;
+            if (curr.progress != null) merged.progress = curr.progress;
+            return merged;
+          });
+        }
+
+        if (btn) { btn.disabled = true; }
+        try {
+          var postRes = await _authPostSnapshots('/.netlify/functions/snapshot', {
+            slug: slug,
+            payload: overlayPayload,
+          });
+          var data = null;
+          try { data = await postRes.json(); } catch (_) { /* non-JSON */ }
+          if (!postRes.ok) {
+            var emsg = (data && data.error) || ('HTTP ' + postRes.status);
+            _showError('Save failed: ' + emsg);
+            return;
+          }
+          var newId = data && data.snapshot && data.snapshot.id;
+          // Clear the dirty flag (the snapshot captured the edits).
+          if (window.PPGanttApp && window.PPGanttApp.resetSimulation) {
+            try { window.PPGanttApp.resetSimulation(); } catch (_) { /* ignore */ }
+          }
+          await _reloadSnapshots({ selectSnapshotId: newId });
+        } catch (err) {
+          _showError('Save failed: ' + (err && err.message ? err.message : err));
+        } finally {
+          _syncSaveSnapshotBtn();
+        }
+      }
+
+      // ─── Public API exposed to the bootstrap IIFE ──────────────────
+
+      window.PPGanttSnapshots = {
+        reload: function (opts) {
+          // Entry point from _ppgReloadData on gated routes.
+          return _reloadSnapshots(opts || {});
+        },
+        refreshList: async function () {
+          await _fetchSnapshotList();
+          _buildSnapshotSidebar(_snapshots);
+          _emitSelected();
+          _syncSaveSnapshotBtn();
+          return _snapshots;
+        },
+        getSelectedId: function () { return _selectedSnapshotId; },
+        isDirty: function () { return _isDirty(); },
+        showGhost: function (label) { _showGhostCard(label); },
+        updateGhost: function (label) { _updateGhostCard(label); },
+        hideGhost: function () { _hideGhostCard(); },
+      };
+
+      // Poll-on-timer fallback for the Save button dirty state — the
+      // simulator doesn't fire a custom event for pushes.  A 500ms tick
+      // is cheap and imperceptible to users, and keeps the button in
+      // sync after drags/undos/resets without wiring into every code path.
+      setInterval(_syncSaveSnapshotBtn, 500);
+
+      // ─── Init: decide which sidebar to build on DOMContentLoaded ────
       //
       // The bootstrap IIFE already fires a DOMContentLoaded listener that
       // loads and renders the fixture. We add our own DOMContentLoaded
-      // listener here — both will fire; order is declaration order.
+      // listener here — both fire; order is declaration order.
       //
-      // We wait until after the existing bootstrap has had a chance to
-      // render (by using a 0ms setTimeout inside DOMContentLoaded) so
-      // the sidebar appears to "layer on top" of an already-rendered chart.
+      // On a gated slug route: show the snapshot sidebar (pulled from
+      // Supabase).  On non-gated routes: keep the legacy file-list
+      // sidebar backed by PPGanttLoader.loadManifest().
 
       document.addEventListener('DOMContentLoaded', function () {
+        var path = window.location.pathname || '/';
+        var isGatedSlugRoute = /^\/[a-z0-9-]+$/.test(path) && path !== '/';
+
+        function _wireSaveBtn() {
+          var saveBtn = document.getElementById('save-snapshot-btn');
+          if (saveBtn && !saveBtn.dataset._wired) {
+            saveBtn.dataset._wired = '1';
+            saveBtn.addEventListener('click', _handleSaveSnapshot);
+          }
+          _syncSaveSnapshotBtn();
+        }
+
+        function _initSnapshotSidebar() {
+          var titleEl = document.getElementById('sidebar-title');
+          if (titleEl) titleEl.textContent = 'Snapshots';
+          var toggleBtn = document.getElementById('sidebar-hamburger');
+          if (toggleBtn) toggleBtn.style.display = 'flex';
+          _wireSaveBtn();
+
+          _fetchSnapshotList().then(function () {
+            _buildSnapshotSidebar(_snapshots);
+            if (_snapshots.length > 0) {
+              // Auto-select the most recent (first in DESC list).
+              return _loadAndRenderSnapshot(_snapshots[0].id);
+            }
+            // Empty state — clear the "Loading fixture data..." banner
+            // and replace it with a friendlier prompt so the chart area
+            // isn't stuck on the spinner text.
+            var loadingBanner = document.getElementById('loading-banner');
+            if (loadingBanner) {
+              loadingBanner.textContent =
+                'No snapshots yet for this project. Open the sync menu (top-right) and click "Pull from Notion" to create one.';
+            }
+            _emitSelected();
+          }).catch(function (err) {
+            console.warn('[PPGanttApp] snapshot list load failed:', err.message || err);
+            _buildSnapshotSidebar([]); // render empty state on error
+            var loadingBanner2 = document.getElementById('loading-banner');
+            if (loadingBanner2) {
+              loadingBanner2.textContent =
+                'Could not load snapshots: ' + (err && err.message ? err.message : err);
+            }
+          });
+        }
+
+        if (isGatedSlugRoute) {
+          // Wait for the supabase gate to signal readiness so the fetch
+          // override and Supabase client are in place before we hit the
+          // Netlify Functions.
+          if (window.__PPGANTT_SLUG__) {
+            _initSnapshotSidebar();
+          } else {
+            document.addEventListener('ppgantt:slug-ready', _initSnapshotSidebar, { once: true });
+            setTimeout(function () {
+              if (window.__PPGANTT_SLUG__) _initSnapshotSidebar();
+            }, 5000);
+          }
+          return;
+        }
+
+        // ─── Legacy non-gated path: file-list sidebar from the manifest ───
         if (!window.PPGanttLoader) {
           console.warn('[PPGanttApp] loader.js not loaded — sidebar disabled');
           return;
