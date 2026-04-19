@@ -32,9 +32,10 @@
 # Supabase magic-link callback lands here. We serve index.html; the
 # Supabase JS client runs on page load, reads the tokens from the URL
 # hash, persists the session, and then supabase-gate.js routes the
-# user to the `next` slug.
+# user to the `next` slug. Single-segment path so relative CSS/JS
+# refs in index.html still resolve correctly.
 [[redirects]]
-  from = "/auth/callback"
+  from = "/auth-callback.html"
   to = "/index.html"
   status = 200
 

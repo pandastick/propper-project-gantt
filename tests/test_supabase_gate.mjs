@@ -85,7 +85,7 @@ test('isGatedSlugRoute: non-slug paths are not gated', () => {
   assert.equal(isGatedSlugRoute('/login.html'), false);
   assert.equal(isGatedSlugRoute('/a/b'), false);
   assert.equal(isGatedSlugRoute('/SOME_UPPER'), false);
-  assert.equal(isGatedSlugRoute('/auth/callback'), false);
+  assert.equal(isGatedSlugRoute('/auth-callback.html'), false);
 });
 
 test('installGate: on `/` (public demo), no-op — fetch is not overridden', async () => {
@@ -175,8 +175,8 @@ test('installGate: unrelated fetches pass through untouched', async () => {
   assert.equal(calls.origFetchCalls[0].url, '/some/other/url.json');
 });
 
-test('installGate: /auth/callback forwards to `next` and calls getSession first', async () => {
-  const { win, calls } = makeFakeWindow({ path: '/auth/callback', search: '?next=%2Fsocietist' });
+test('installGate: /auth-callback.html forwards to `next` and calls getSession first', async () => {
+  const { win, calls } = makeFakeWindow({ path: '/auth-callback.html', search: '?next=%2Fsocietist' });
   const supabase = makeFakeSupabase(null);
 
   const result = installGate({ supabase, win });
@@ -188,9 +188,9 @@ test('installGate: /auth/callback forwards to `next` and calls getSession first'
   assert.deepEqual(calls.replaceCalls, ['/societist']);
 });
 
-test('installGate: /auth/callback rejects open redirects in `next`', async () => {
+test('installGate: /auth-callback.html rejects open redirects in `next`', async () => {
   const { win, calls } = makeFakeWindow({
-    path: '/auth/callback',
+    path: '/auth-callback.html',
     search: '?next=https%3A%2F%2Fevil.example.com',
   });
   const supabase = makeFakeSupabase(null);

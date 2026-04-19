@@ -23,7 +23,7 @@
 
 // Top-of-file: pure, dependency-free helpers. Safe to import from tests.
 
-const PUBLIC_PATHS = new Set(['/', '/index.html', '/login', '/login.html', '/auth/callback']);
+const PUBLIC_PATHS = new Set(['/', '/index.html', '/login', '/login.html', '/auth-callback.html']);
 
 function isGatedSlugRoute(path) {
   if (PUBLIC_PATHS.has(path)) return false;
@@ -43,9 +43,10 @@ function installGate({ supabase, win }) {
   const loc = win.location;
   const path = loc.pathname;
 
-  // /auth/callback: Supabase client handles URL-hash tokens via
-  // detectSessionInUrl:true. We just forward to `next`.
-  if (path === '/auth/callback') {
+  // /auth-callback.html: Supabase client handles URL-hash tokens via
+  // detectSessionInUrl:true. We just forward to `next`. Single-segment
+  // path keeps relative asset refs in index.html working.
+  if (path === '/auth-callback.html') {
     const params = new URLSearchParams(loc.search || '');
     const nextRaw = params.get('next') || '/';
     const next =

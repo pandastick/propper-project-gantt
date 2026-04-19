@@ -347,7 +347,7 @@
 
       const redirect = safeRedirectTarget();
       const emailRedirectTo =
-        window.location.origin + '/auth/callback?next=' + encodeURIComponent(redirect);
+        window.location.origin + '/auth-callback.html?next=' + encodeURIComponent(redirect);
 
       setLoading(true);
       try {
