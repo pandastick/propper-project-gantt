@@ -43,6 +43,8 @@
 
 'use strict';
 
+const { assembleRoadmapResponse } = require('./_shared/roadmap-shape');
+
 const NOTION_API_VERSION = '2022-06-28';
 const SLUG_PATTERN = /^[a-z0-9-]{1,32}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -523,7 +525,7 @@ exports.handler = async (event) => {
     const [mappingRes, phasesRes, streamsRes, localTasksRes] = await Promise.all([
       sbSelect(
         supabaseUrl, accessToken, anonKey, 'ppgantt',
-        `notion_schema_mappings?select=notion_db_id,mapping&project_id=eq.${projectId}`,
+        `notion_schema_mappings?select=notion_db_id,mapping,phase_palette&project_id=eq.${projectId}`,
       ),
       sbSelect(
         supabaseUrl, accessToken, anonKey, 'ppgantt',
@@ -664,11 +666,64 @@ exports.handler = async (event) => {
         ? syncEventIns.body[0].id
         : null;
 
+    let snapshotId = null;
+    if (overallStatus !== 'failed') {
+      // Re-query post-upsert tasks (full row) + deps so we can assemble
+      // the viewer-contract shape. mappingRes/phasesRes/streamsRes already
+      // fetched above. The assembled payload is renderable standalone —
+      // the viewer can load it without joining tables.
+      const [tasksRes2, depsRes2] = await Promise.all([
+        sbSelect(
+          supabaseUrl, accessToken, anonKey, 'ppgantt',
+          `tasks?select=*&project_id=eq.${projectId}`,
+        ),
+        sbSelect(
+          supabaseUrl, accessToken, anonKey, 'ppgantt',
+          `task_dependencies?select=blocked_task_id,blocker_task_id`,
+        ),
+      ]);
+      if (tasksRes2.ok && depsRes2.ok) {
+        const mappingRow = mappingRes.body && mappingRes.body[0] ? mappingRes.body[0] : null;
+        const assembled = assembleRoadmapResponse({
+          mappingRow: mappingRow,
+          phases: phasesRes.body || [],
+          streams: streamsRes.body || [],
+          tasks: tasksRes2.body || [],
+          deps: depsRes2.body || [],
+          latestSync: nowIso,
+        });
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const yy = pad(d.getUTCFullYear() % 100);
+        const label = `Notion pull ${yy}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+        const snapIns = await sbInsert(
+          supabaseUrl, accessToken, anonKey, 'ppgantt', 'snapshots',
+          {
+            project_id: projectId,
+            kind: 'import',
+            label: label,
+            payload: assembled,
+            source_sync_event_id: syncEventId,
+            created_by: userId,
+          },
+          true,
+        );
+        if (snapIns.ok && snapIns.body && snapIns.body[0]) {
+          snapshotId = snapIns.body[0].id;
+        } else {
+          console.error('pull-from-notion: snapshot insert failed, status', snapIns.status);
+        }
+      } else {
+        console.error('pull-from-notion: snapshot assembly re-query failed');
+      }
+    }
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       body: JSON.stringify({
         syncEventId,
+        snapshotId,
         rowsRead,
         rowsWritten,
         rowsFailed,

@@ -340,6 +340,26 @@ exports.handler = async (event) => {
     const slug = body.slug;
     const rawProjectId = body.project_id;
 
+    // Snapshot contract (Phase 3b): Push is always sourced from a caller-
+    // provided snapshot row, never from the live ppgantt.tasks table. The
+    // snapshot was created either by Pull (kind='import') or manually by
+    // the user (kind='snapshot'). We freeze the payload here, push it,
+    // and flip the snapshot to kind='pushed' on the final chunk of a
+    // successful push.
+    const rawSnapshotId = body.snapshot_id;
+    if (!rawSnapshotId || typeof rawSnapshotId !== 'string' || !UUID_PATTERN.test(rawSnapshotId)) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'snapshot_id is required and must be a UUID' }),
+      };
+    }
+    const snapshotId = rawSnapshotId;
+
+    // is_final_chunk: when the client batches a large push into multiple
+    // calls, only the final one should flip the snapshot. Defaults to true
+    // for the common unchunked case.
+    const isFinalChunk = body.is_final_chunk === false ? false : true;
+
     // Optional filter: restrict this push to a specific chunk of Notion page IDs.
     // Used by the client-side chunked-push loop to stay under Lambda's 30s timeout
     // on large pushes without losing data fidelity (we never fudge timestamps).
@@ -386,7 +406,7 @@ exports.handler = async (event) => {
       return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
     }
 
-    const [mappingRes, profileRes, tasksRes] = await Promise.all([
+    const [mappingRes, profileRes, snapshotRes] = await Promise.all([
       sbSelect(
         supabaseUrl, accessToken, anonKey, 'ppgantt',
         `notion_schema_mappings?select=notion_db_id,mapping&project_id=eq.${projectId}`,
@@ -395,23 +415,17 @@ exports.handler = async (event) => {
         supabaseUrl, accessToken, anonKey, null,
         `profiles?select=display_name&id=eq.${userId}`,
       ),
+      // Snapshot lookup. Also filtered by project_id: even though RLS would
+      // block cross-project snapshot access, the explicit filter is a
+      // belt-and-suspenders guard and lets the empty-body check stand in
+      // for "not found OR not yours" → 404 either way.
       sbSelect(
         supabaseUrl, accessToken, anonKey, 'ppgantt',
-        (() => {
-          let q =
-            `tasks?select=id,notion_page_id,start_date,end_date,notion_sync_status` +
-            `&project_id=eq.${projectId}` +
-            `&notion_sync_status=in.(clean,local_ahead)`;
-          if (notionPageIdFilter && notionPageIdFilter.length > 0) {
-            // PostgREST `in.(...)` accepts comma-joined values; UUIDs are URL-safe.
-            q += `&notion_page_id=in.(${notionPageIdFilter.join(',')})`;
-          }
-          return q;
-        })(),
+        `snapshots?select=*&id=eq.${encodeURIComponent(snapshotId)}&project_id=eq.${projectId}`,
       ),
     ]);
 
-    for (const r of [mappingRes, profileRes, tasksRes]) {
+    for (const r of [mappingRes, profileRes, snapshotRes]) {
       if (!r.ok) {
         console.error('push-to-notion: supabase fetch status', r.status);
         return { statusCode: 500, body: JSON.stringify({ error: 'Internal error' }) };
@@ -422,6 +436,20 @@ exports.handler = async (event) => {
       return {
         statusCode: 500,
         body: JSON.stringify({ error: 'Project has no Notion schema mapping' }),
+      };
+    }
+
+    if (!snapshotRes.body || snapshotRes.body.length === 0) {
+      return {
+        statusCode: 404,
+        body: JSON.stringify({ error: 'Snapshot not found' }),
+      };
+    }
+    const snapshot = snapshotRes.body[0];
+    if (snapshot.kind === 'pushed') {
+      return {
+        statusCode: 409,
+        body: JSON.stringify({ error: 'snapshot already pushed' }),
       };
     }
 
@@ -438,6 +466,41 @@ exports.handler = async (event) => {
         ? profileRes.body[0].display_name
         : 'Unknown';
 
+    // Derive the pushable task list from the snapshot's frozen payload.
+    // The payload is the viewer-shape response (assembleRoadmapResponse):
+    // { source, schema_mapping, phase_palette, tasks: [{id, start, end, meta: {...}}, ...] }.
+    // We flatten each viewer-shape row back to the column-flat shape that
+    // pushTasksToNotion expects (start_date/end_date/notion_page_id at top
+    // level) — same adapter used by the old live-tasks path.
+    const PUSHABLE_STATUSES = new Set(['clean', 'local_ahead']);
+    const rawPayload = snapshot.payload;
+    // Support two payload shapes: new viewer-shape (object with .tasks) and
+    // legacy bare-array (only ever produced by the intermediate commit before
+    // this change; kept so stale snapshots don't 500 the push).
+    const payloadTasks = Array.isArray(rawPayload)
+      ? rawPayload
+      : Array.isArray(rawPayload && rawPayload.tasks) ? rawPayload.tasks : [];
+    const flatten = (t) => {
+      if (!t || typeof t !== 'object') return null;
+      const meta = t.meta || {};
+      return {
+        id: t.id,
+        start_date: t.start_date || t.start || '',
+        end_date: t.end_date || t.end || '',
+        notion_page_id: t.notion_page_id || meta.notion_page_id || null,
+        notion_sync_status: t.notion_sync_status || meta.notion_sync_status || null,
+      };
+    };
+    let pushableTasks = payloadTasks
+      .map(flatten)
+      .filter((t) => t && PUSHABLE_STATUSES.has(t.notion_sync_status));
+    if (notionPageIdFilter && notionPageIdFilter.length > 0) {
+      const allowed = new Set(notionPageIdFilter.map((x) => x.toLowerCase()));
+      pushableTasks = pushableTasks.filter(
+        (t) => t.notion_page_id && allowed.has(String(t.notion_page_id).toLowerCase()),
+      );
+    }
+
     const startedAt = new Date().toISOString();
     const syncTimestamp = startedAt;
 
@@ -447,7 +510,7 @@ exports.handler = async (event) => {
     };
 
     const { results, verifiedCount, failedCount } = await pushTasksToNotion({
-      tasks: tasksRes.body || [],
+      tasks: pushableTasks,
       mapping,
       userDisplayName,
       syncTimestamp,
@@ -516,11 +579,39 @@ exports.handler = async (event) => {
         ? syncEventInsert.body[0].id
         : null;
 
+    // Flip the snapshot kind → 'pushed' only on the final chunk of a
+    // fully-successful push. Partial/failed pushes leave the snapshot in
+    // its current kind so the user can retry. A failed flip is logged but
+    // non-fatal: Notion is already updated, so returning 500 would mislead
+    // the client into thinking the push itself failed.
+    let snapshotFlipped = false;
+    let snapshotFlipFailed = false;
+    if (isFinalChunk && overallStatus === 'success') {
+      const flipRes = await sbPatch(
+        supabaseUrl, accessToken, anonKey, 'ppgantt',
+        `snapshots?id=eq.${encodeURIComponent(snapshotId)}`,
+        {
+          kind: 'pushed',
+          pushed_at: syncTimestamp,
+          pushed_sync_event_id: syncEventId,
+        },
+      );
+      if (flipRes.ok) {
+        snapshotFlipped = true;
+      } else {
+        snapshotFlipFailed = true;
+        console.error('push-to-notion: snapshot flip failed, status', flipRes.status);
+      }
+    }
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       body: JSON.stringify({
         syncEventId,
+        snapshotId,
+        snapshotFlipped,
+        snapshotFlipFailed,
         totalChanges: results.length,
         verifiedCount,
         failedCount,

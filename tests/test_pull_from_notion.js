@@ -350,6 +350,10 @@ test('handler pulls from Notion, upserts, and writes one sync_events row', async
     })],
     [/\/rest\/v1\/phases\?/, () => ({ status: 200, body: [] })],
     [/\/rest\/v1\/streams\?/, () => ({ status: 200, body: [] })],
+    [/\/rest\/v1\/task_dependencies\?/, () => ({ status: 200, body: [] })],
+    // Post-upsert payload re-query (snapshot.payload) — matches before
+    // the more general tasks?select route.
+    [/\/rest\/v1\/tasks\?select=\*/, () => ({ status: 200, body: [{ id: 'task-1', name: 'Hello' }] })],
     [/\/rest\/v1\/tasks\?select/, () => ({ status: 200, body: [] })], // no local tasks
     [/api\.notion\.com\/v1\/databases\/.*\/query$/, () => ({
       status: 200,
@@ -374,6 +378,8 @@ test('handler pulls from Notion, upserts, and writes one sync_events row', async
       seenSyncEvent.push(JSON.parse(opts.body));
       return { status: 201, body: [{ id: 'evt-9' }] };
     }],
+    // snapshots insert (Phase 3a)
+    [/\/rest\/v1\/snapshots$/, () => ({ status: 201, body: [{ id: 'snap-1' }] })],
   ];
   const { restore } = installFetchStub(routes);
   try {
@@ -409,6 +415,7 @@ test('handler returns 502 and logs failed sync_event when Notion errors', async 
     })],
     [/\/rest\/v1\/phases\?/, () => ({ status: 200, body: [] })],
     [/\/rest\/v1\/streams\?/, () => ({ status: 200, body: [] })],
+    [/\/rest\/v1\/task_dependencies\?/, () => ({ status: 200, body: [] })],
     [/\/rest\/v1\/tasks\?select/, () => ({ status: 200, body: [] })],
     [/api\.notion\.com\/v1\/databases\/.*\/query$/, () => ({ status: 500, body: 'boom' })],
     [/\/rest\/v1\/sync_events$/, (_u, opts) => {
@@ -437,4 +444,264 @@ test('handler rejects missing Authorization', async () => {
     body: JSON.stringify({ slug: 'societist' }),
   });
   assert.equal(res.statusCode, 401);
+});
+
+// ─── Phase 3a: snapshot creation on Pull ─────────────────────────────────
+
+/**
+ * Build a default success route table for snapshot tests.
+ * `opts` lets callers override the notion response, task payloads, and
+ * insert/snapshot responses without repeating the whole table.
+ */
+function buildPullRoutes(opts) {
+  opts = opts || {};
+  const notion = opts.notion || {
+    status: 200,
+    body: {
+      results: [{
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        last_edited_time: '2026-04-18T10:00:00Z',
+        properties: {
+          'Task Name': { type: 'title', title: [{ plain_text: 'Hello' }] },
+          'Start Date': { type: 'date', date: { start: '2026-04-14' } },
+          'End Date': { type: 'date', date: { start: '2026-04-15' } },
+        },
+      }],
+      has_more: false,
+      next_cursor: null,
+    },
+  };
+  const postUpsertTasks = opts.postUpsertTasks || [{
+    id: 'task-1',
+    notion_page_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    name: 'Hello',
+    start_date: '2026-04-14',
+    end_date: '2026-04-15',
+    notion_sync_status: 'clean',
+  }];
+  const snapshotInserts = opts.snapshotInserts || [];
+  const snapshotResponse =
+    opts.snapshotResponse !== undefined
+      ? opts.snapshotResponse
+      : { status: 201, body: [{ id: 'snap-42' }] };
+  const tasksInsertResponse = opts.tasksInsertResponse || { status: 201, body: '' };
+  const syncEvents = opts.syncEvents || [];
+  const syncEventResponse = opts.syncEventResponse || { status: 201, body: [{ id: 'evt-9' }] };
+
+  return [
+    [/\/auth\/v1\/user$/, () => ({ status: 200, body: { id: 'user-1' } })],
+    [/\/rest\/v1\/projects\?/, () => ({ status: 200, body: [{ id: 'proj-1', slug: 'societist' }] })],
+    [/\/rest\/v1\/notion_schema_mappings\?/, () => ({
+      status: 200,
+      body: [{
+        notion_db_id: 'db-1',
+        mapping: {
+          name_field: 'Task Name',
+          start_field: 'Start Date',
+          end_field: 'End Date',
+        },
+      }],
+    })],
+    [/\/rest\/v1\/phases\?/, () => ({ status: 200, body: [] })],
+    [/\/rest\/v1\/streams\?/, () => ({ status: 200, body: [] })],
+    [/\/rest\/v1\/task_dependencies\?/, () => ({ status: 200, body: [] })],
+    // Post-upsert payload re-query uses select=* — must match BEFORE the
+    // general tasks?select route to avoid swallowing it.
+    [/\/rest\/v1\/tasks\?select=\*/, () => ({ status: 200, body: postUpsertTasks })],
+    // Pre-upsert local tasks fetch
+    [/\/rest\/v1\/tasks\?select/, () => ({ status: 200, body: [] })],
+    [/api\.notion\.com\/v1\/databases\/.*\/query$/, () => notion],
+    // Tasks INSERT (the upsert path)
+    [/\/rest\/v1\/tasks$/, () => tasksInsertResponse],
+    // sync_events insert
+    [/\/rest\/v1\/sync_events$/, (_u, o) => {
+      syncEvents.push(JSON.parse(o.body));
+      return syncEventResponse;
+    }],
+    // snapshots insert
+    [/\/rest\/v1\/snapshots$/, (_u, o) => {
+      snapshotInserts.push(JSON.parse(o.body));
+      return snapshotResponse;
+    }],
+  ];
+}
+
+test('pull creates an import snapshot on success', async () => {
+  const snapshotInserts = [];
+  const routes = buildPullRoutes({ snapshotInserts });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist' }),
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(snapshotInserts.length, 1, 'exactly one snapshot insert');
+    const snap = snapshotInserts[0];
+    assert.equal(snap.kind, 'import');
+    assert.equal(snap.project_id, 'proj-1');
+    assert.equal(snap.source_sync_event_id, 'evt-9');
+    assert.equal(snap.created_by, 'user-1');
+    // Payload is the viewer-shape response: object with tasks array +
+    // schema_mapping, phase_palette, source. Not a bare tasks array.
+    assert.equal(typeof snap.payload, 'object', 'payload is object');
+    assert.ok(!Array.isArray(snap.payload), 'payload is not a bare array');
+    assert.ok(Array.isArray(snap.payload.tasks), 'payload.tasks is array');
+    assert.ok(snap.payload.tasks.length > 0, 'payload.tasks non-empty');
+    assert.ok(snap.payload.schema_mapping, 'payload.schema_mapping present');
+    // Label format: "Notion pull YY-MM-DD HH:MM"
+    assert.match(snap.label, /^Notion pull \d{2}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  } finally { restore(); }
+});
+
+test('pull skips snapshot creation on full failure', async () => {
+  const snapshotInserts = [];
+  const routes = buildPullRoutes({
+    notion: { status: 500, body: 'boom' },
+    snapshotInserts,
+  });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist' }),
+    });
+    assert.equal(res.statusCode, 502);
+    assert.equal(snapshotInserts.length, 0, 'no snapshot on full failure');
+  } finally { restore(); }
+});
+
+test('pull creates snapshot on partial success', async () => {
+  const snapshotInserts = [];
+  const routes = buildPullRoutes({
+    // Two Notion pages; one tasks INSERT will fail
+    notion: {
+      status: 200,
+      body: {
+        results: [
+          {
+            id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            last_edited_time: '2026-04-18T10:00:00Z',
+            properties: {
+              'Task Name': { type: 'title', title: [{ plain_text: 'Page A' }] },
+              'Start Date': { type: 'date', date: { start: '2026-04-14' } },
+              'End Date': { type: 'date', date: { start: '2026-04-15' } },
+            },
+          },
+          {
+            id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            last_edited_time: '2026-04-18T10:00:00Z',
+            properties: {
+              'Task Name': { type: 'title', title: [{ plain_text: 'Page B' }] },
+              'Start Date': { type: 'date', date: { start: '2026-04-16' } },
+              'End Date': { type: 'date', date: { start: '2026-04-17' } },
+            },
+          },
+        ],
+        has_more: false,
+        next_cursor: null,
+      },
+    },
+    snapshotInserts,
+  });
+  // Override tasks INSERT to fail the second call.
+  let insertCalls = 0;
+  const origFetch = null;
+  // Swap the tasks-insert entry for a stateful handler.
+  for (const row of routes) {
+    if (row[0] && row[0].source === '\\/rest\\/v1\\/tasks$') {
+      row[1] = () => {
+        insertCalls++;
+        if (insertCalls === 2) return { status: 500, body: 'insert boom' };
+        return { status: 201, body: '' };
+      };
+    }
+  }
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist' }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'partial');
+    assert.equal(snapshotInserts.length, 1, 'snapshot still created on partial');
+    assert.equal(snapshotInserts[0].kind, 'import');
+  } finally { restore(); }
+});
+
+test('pull response includes snapshotId', async () => {
+  const snapshotInserts = [];
+  const routes = buildPullRoutes({
+    snapshotInserts,
+    snapshotResponse: { status: 201, body: [{ id: 'snap-xyz-123' }] },
+  });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist' }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.snapshotId, 'snap-xyz-123');
+  } finally { restore(); }
+});
+
+test('pull snapshot label uses 2-digit year', async () => {
+  const snapshotInserts = [];
+  const routes = buildPullRoutes({ snapshotInserts });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist' }),
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(snapshotInserts.length, 1);
+    const label = snapshotInserts[0].label;
+    // Strict: "Notion pull YY-MM-DD HH:MM" with 2-digit year, not 4
+    assert.match(label, /^Notion pull \d{2}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    // Verify the year part is indeed 2 digits (not 2026, etc.)
+    const yearPart = label.slice('Notion pull '.length, 'Notion pull '.length + 2);
+    assert.equal(yearPart.length, 2);
+    // Today's UTC 2-digit year should match
+    const d = new Date();
+    const expectedYY = String(d.getUTCFullYear() % 100).padStart(2, '0');
+    assert.equal(yearPart, expectedYY);
+  } finally { restore(); }
+});
+
+test('pull returns 200 with snapshotId=null when snapshot insert fails', async () => {
+  // Snapshot insert network blip: the pull itself succeeded, but the
+  // snapshots POST returns 500. The function must log + return 200 with
+  // snapshotId: null.
+  const snapshotInserts = [];
+  const routes = buildPullRoutes({
+    snapshotInserts,
+    snapshotResponse: { status: 500, body: 'snap boom' },
+  });
+  const { restore } = installFetchStub(routes);
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist' }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.snapshotId, null);
+    assert.equal(body.status, 'success');
+  } finally {
+    console.error = origErr;
+    restore();
+  }
 });

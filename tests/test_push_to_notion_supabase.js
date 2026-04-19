@@ -177,14 +177,47 @@ test('pushTasksToNotion rejects missing dates with invalid_input', async () => {
 
 // ─── Handler end-to-end ─────────────────────────────────────────────────
 
-test('handler writes a sync_events row on success', async () => {
-  const calls = [];
-  const routes = [
-    // auth/user — returns current user id
+// Shared fixtures / helpers for handler-level tests.
+const SNAPSHOT_ID = '11111111-1111-1111-1111-111111111111';
+const PAGE_ID_A = '7159e1fc-caab-83b7-9ee3-818c84f19cf8';
+const PAGE_ID_B = '3439e1fc-caab-8166-aa76-c3992cdb8a80';
+const PAGE_ID_C = '2919e1fc-caab-4411-aa77-c3992cdb8a88';
+
+function taskRow(pageId, status, startDate, endDate) {
+  return {
+    id: pageId,
+    notion_page_id: pageId,
+    start_date: startDate,
+    end_date: endDate,
+    notion_sync_status: status,
+    name: `Task ${pageId.slice(0, 4)}`,
+  };
+}
+
+// Build a baseline route table suitable for most handler tests. Individual
+// tests override the snapshots SELECT / tasks SELECT / Notion branches as
+// needed. snapshotRows is what the SELECT on ppgantt.snapshots returns.
+function baseRoutes({
+  snapshotRows,
+  tasksRows = [],
+  notionPatchStatus = 200,
+  notionPatchBody = { object: 'page' },
+  notionVerifyStart,
+  notionVerifyEnd,
+  snapshotPatchStatus = 204,
+  syncEventStatus = 201,
+  recorder = {},
+}) {
+  const recorded = recorder;
+  recorded.snapshotPatches = recorded.snapshotPatches || [];
+  recorded.syncEventInserts = recorded.syncEventInserts || [];
+  recorded.taskPatches = recorded.taskPatches || [];
+  recorded.notionCalls = recorded.notionCalls || [];
+
+  return [
     [/\/auth\/v1\/user$/, () => ({ status: 200, body: { id: 'user-1' } })],
-    // project lookup
     [/\/rest\/v1\/projects\?/, () => ({ status: 200, body: [{ id: 'proj-1', slug: 'societist' }] })],
-    // schema mapping
+    [/\/rest\/v1\/snapshots\?select=/, () => ({ status: 200, body: snapshotRows })],
     [/\/rest\/v1\/notion_schema_mappings\?/, () => ({
       status: 200,
       body: [{
@@ -197,47 +230,75 @@ test('handler writes a sync_events row on success', async () => {
         },
       }],
     })],
-    // profiles
     [/\/rest\/v1\/profiles\?/, () => ({ status: 200, body: [{ display_name: 'Peter' }] })],
-    // tasks
-    [/\/rest\/v1\/tasks\?.*notion_sync_status=in/, () => ({
-      status: 200,
-      body: [{
-        id: '7159e1fc-caab-83b7-9ee3-818c84f19cf8',
-        notion_page_id: '7159e1fc-caab-83b7-9ee3-818c84f19cf8',
-        start_date: '2026-04-14', end_date: '2026-04-14',
-        notion_sync_status: 'clean',
-      }],
-    })],
-    // Notion patch
+    [/\/rest\/v1\/tasks\?.*notion_sync_status=in/, () => ({ status: 200, body: tasksRows })],
     [/https:\/\/api\.notion\.com\/v1\/pages\/.*$/, (url, opts) => {
+      recorded.notionCalls.push({ url, method: opts && opts.method });
       if (opts && opts.method === 'PATCH') {
-        return { status: 200, body: { object: 'page' } };
+        return { status: notionPatchStatus, body: notionPatchBody };
       }
+      // Verify read-back. Default returns the requested page_id's dates if
+      // the test set them; otherwise echoes 2026-04-14/14.
       return {
         status: 200,
         body: {
           properties: {
-            'Start Date': { type: 'date', date: { start: '2026-04-14' } },
-            'End Date': { type: 'date', date: { start: '2026-04-14' } },
+            'Start Date': { type: 'date', date: { start: notionVerifyStart || '2026-04-14' } },
+            'End Date':   { type: 'date', date: { start: notionVerifyEnd   || '2026-04-14' } },
           },
         },
       };
     }],
-    // tasks PATCH (local row update)
-    [/\/rest\/v1\/tasks\?id=eq\./, () => ({ status: 204, body: '' })],
-    // sync_events insert — record that we got here
-    [/\/rest\/v1\/sync_events/, (_u, opts, allCalls) => {
-      calls.push({ type: 'sync_event_insert', body: JSON.parse(opts.body) });
-      return { status: 201, body: [{ id: 'evt-1' }] };
+    // snapshots PATCH (flip) — must come BEFORE the generic tasks PATCH so
+    // `/rest/v1/tasks?id=eq.` doesn't swallow it. Routes are matched in
+    // order with first-wins.
+    [/\/rest\/v1\/snapshots\?id=eq\./, (_u, opts) => {
+      recorded.snapshotPatches.push(JSON.parse(opts.body));
+      return { status: snapshotPatchStatus, body: '' };
+    }],
+    [/\/rest\/v1\/tasks\?id=eq\./, (_u, opts) => {
+      recorded.taskPatches.push(opts && opts.body ? JSON.parse(opts.body) : null);
+      return { status: 204, body: '' };
+    }],
+    [/\/rest\/v1\/sync_events/, (_u, opts) => {
+      recorded.syncEventInserts.push(JSON.parse(opts.body));
+      return { status: syncEventStatus, body: [{ id: 'evt-1' }] };
     }],
   ];
+}
+
+function snapshotRow(overrides = {}) {
+  return {
+    id: SNAPSHOT_ID,
+    project_id: 'proj-1',
+    kind: 'snapshot',
+    label: 'pre-push',
+    notes: null,
+    payload: [
+      taskRow(PAGE_ID_A, 'clean', '2026-04-14', '2026-04-14'),
+    ],
+    source_sync_event_id: null,
+    pushed_at: null,
+    pushed_sync_event_id: null,
+    created_at: '2026-04-18T12:00:00Z',
+    created_by: 'user-1',
+    ...overrides,
+  };
+}
+
+test('handler writes a sync_events row on success', async () => {
+  const recorded = {};
+  const routes = baseRoutes({
+    snapshotRows: [snapshotRow()],
+    tasksRows: [], // live table intentionally empty — data comes from snapshot
+    recorder: recorded,
+  });
   const { restore, calls: fetchCalls } = installFetchStub(routes);
   try {
     const event = {
       httpMethod: 'POST',
       headers: { Authorization: 'Bearer jwt-abc' },
-      body: JSON.stringify({ slug: 'societist' }),
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
     };
     const res = await handler(event);
     assert.equal(res.statusCode, 200);
@@ -247,21 +308,22 @@ test('handler writes a sync_events row on success', async () => {
     assert.equal(body.status, 'success');
     assert.equal(body.syncEventId, 'evt-1');
 
-    assert.equal(calls.length, 1, 'exactly one sync_events insert');
-    assert.equal(calls[0].body.direction, 'push_to_notion');
-    assert.equal(calls[0].body.status, 'success');
-    assert.equal(calls[0].body.rows_read, 1);
-    assert.equal(calls[0].body.rows_written, 1);
-    assert.equal(calls[0].body.actor_id, 'user-1');
+    assert.equal(recorded.syncEventInserts.length, 1, 'exactly one sync_events insert');
+    assert.equal(recorded.syncEventInserts[0].direction, 'push_to_notion');
+    assert.equal(recorded.syncEventInserts[0].status, 'success');
+    assert.equal(recorded.syncEventInserts[0].rows_read, 1);
+    assert.equal(recorded.syncEventInserts[0].rows_written, 1);
+    assert.equal(recorded.syncEventInserts[0].actor_id, 'user-1');
 
-    // sequencing sanity: notion PATCH happens AFTER tasks SELECT, BEFORE sync_events POST
+    // sequencing sanity: notion PATCH happens AFTER snapshot SELECT, BEFORE sync_events POST
     const urls = fetchCalls.map((c) => c.url);
-    const tasksSelectIdx = urls.findIndex((u) => /\/rest\/v1\/tasks\?.*notion_sync_status=in/.test(u));
+    const snapshotSelectIdx = urls.findIndex((u) => /\/rest\/v1\/snapshots\?select=/.test(u));
     const notionPatchIdx = urls.findIndex((u, i) =>
       /api\.notion\.com\/v1\/pages\//.test(u) && fetchCalls[i].method === 'PATCH',
     );
     const syncEventIdx = urls.findIndex((u) => /\/rest\/v1\/sync_events/.test(u));
-    assert.ok(tasksSelectIdx < notionPatchIdx, 'tasks SELECT before Notion PATCH');
+    assert.ok(snapshotSelectIdx >= 0, 'snapshots SELECT happened');
+    assert.ok(snapshotSelectIdx < notionPatchIdx, 'snapshots SELECT before Notion PATCH');
     assert.ok(notionPatchIdx < syncEventIdx, 'Notion PATCH before sync_events insert');
   } finally { restore(); }
 });
@@ -270,7 +332,7 @@ test('handler returns 401 when Authorization missing', async () => {
   const res = await handler({
     httpMethod: 'POST',
     headers: {},
-    body: JSON.stringify({ slug: 'societist' }),
+    body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
   });
   assert.equal(res.statusCode, 401);
 });
@@ -285,8 +347,298 @@ test('handler returns 403 when RLS hides the project', async () => {
     const res = await handler({
       httpMethod: 'POST',
       headers: { Authorization: 'Bearer jwt-abc' },
-      body: JSON.stringify({ slug: 'unseen' }),
+      body: JSON.stringify({ slug: 'unseen', snapshot_id: SNAPSHOT_ID }),
     });
     assert.equal(res.statusCode, 403);
+  } finally { restore(); }
+});
+
+// ─── Snapshot-backed push contract ──────────────────────────────────────
+
+test('push rejects request missing snapshot_id', async () => {
+  const res = await handler({
+    httpMethod: 'POST',
+    headers: { Authorization: 'Bearer jwt-abc' },
+    body: JSON.stringify({ slug: 'societist' }),
+  });
+  assert.equal(res.statusCode, 400);
+  const body = JSON.parse(res.body);
+  assert.match(body.error, /snapshot_id/i);
+});
+
+test('push rejects non-UUID snapshot_id', async () => {
+  const res = await handler({
+    httpMethod: 'POST',
+    headers: { Authorization: 'Bearer jwt-abc' },
+    body: JSON.stringify({ slug: 'societist', snapshot_id: 'not-a-uuid' }),
+  });
+  assert.equal(res.statusCode, 400);
+  const body = JSON.parse(res.body);
+  assert.match(body.error, /snapshot_id/i);
+});
+
+test('push rejects already-pushed snapshot', async () => {
+  const routes = baseRoutes({
+    snapshotRows: [snapshotRow({ kind: 'pushed', pushed_at: '2026-04-18T10:00:00Z' })],
+  });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 409);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /already pushed/i);
+  } finally { restore(); }
+});
+
+test('push returns 404 when snapshot not found', async () => {
+  const routes = baseRoutes({ snapshotRows: [] });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 404);
+  } finally { restore(); }
+});
+
+test('push reads tasks from snapshot payload, not ppgantt.tasks', async () => {
+  // Live tasks table is EMPTY, but the snapshot payload has two pushable
+  // rows. The handler must source from payload, so two Notion PATCHes fire.
+  const recorded = {};
+  const snap = snapshotRow({
+    payload: [
+      taskRow(PAGE_ID_A, 'clean',       '2026-04-14', '2026-04-14'),
+      taskRow(PAGE_ID_B, 'local_ahead', '2026-04-14', '2026-04-14'),
+    ],
+  });
+  const routes = baseRoutes({
+    snapshotRows: [snap],
+    tasksRows: [], // live table empty
+    recorder: recorded,
+  });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 200);
+    const patches = recorded.notionCalls.filter((c) => c.method === 'PATCH');
+    assert.equal(patches.length, 2, 'two Notion PATCHes from snapshot payload');
+    const body = JSON.parse(res.body);
+    assert.equal(body.verifiedCount, 2);
+  } finally { restore(); }
+});
+
+test('push filters snapshot payload by notion_sync_status', async () => {
+  const recorded = {};
+  const snap = snapshotRow({
+    payload: [
+      taskRow(PAGE_ID_A, 'clean',       '2026-04-14', '2026-04-14'),
+      taskRow(PAGE_ID_B, 'local_ahead', '2026-04-14', '2026-04-14'),
+      taskRow(PAGE_ID_C, 'conflict',    '2026-04-14', '2026-04-14'), // skipped
+    ],
+  });
+  const routes = baseRoutes({ snapshotRows: [snap], recorder: recorded });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 200);
+    const patches = recorded.notionCalls.filter((c) => c.method === 'PATCH');
+    assert.equal(patches.length, 2, 'only clean+local_ahead rows push');
+    const body = JSON.parse(res.body);
+    assert.equal(body.totalChanges, 2);
+  } finally { restore(); }
+});
+
+test('push flips snapshot on unchunked success', async () => {
+  const recorded = {};
+  const routes = baseRoutes({
+    snapshotRows: [snapshotRow()],
+    recorder: recorded,
+  });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.snapshotFlipped, true);
+    assert.equal(body.snapshotFlipFailed, false);
+    assert.equal(body.snapshotId, SNAPSHOT_ID);
+
+    assert.equal(recorded.snapshotPatches.length, 1, 'snapshots PATCH fired');
+    const patch = recorded.snapshotPatches[0];
+    assert.equal(patch.kind, 'pushed');
+    assert.ok(patch.pushed_at, 'pushed_at stamped');
+    assert.equal(patch.pushed_sync_event_id, 'evt-1');
+  } finally { restore(); }
+});
+
+test('push does NOT flip snapshot on is_final_chunk=false', async () => {
+  const recorded = {};
+  const routes = baseRoutes({
+    snapshotRows: [snapshotRow()],
+    recorder: recorded,
+  });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({
+        slug: 'societist',
+        snapshot_id: SNAPSHOT_ID,
+        notion_page_ids: [PAGE_ID_A],
+        is_final_chunk: false,
+      }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.snapshotFlipped, false);
+    assert.equal(recorded.snapshotPatches.length, 0, 'no snapshot flip on non-final chunk');
+  } finally { restore(); }
+});
+
+test('push flips snapshot only on final chunk', async () => {
+  const recorded = {};
+  const snap = snapshotRow({
+    payload: [
+      taskRow(PAGE_ID_A, 'clean', '2026-04-14', '2026-04-14'),
+      taskRow(PAGE_ID_B, 'clean', '2026-04-14', '2026-04-14'),
+    ],
+  });
+  const routes = baseRoutes({ snapshotRows: [snap], recorder: recorded });
+  const { restore } = installFetchStub(routes);
+  try {
+    // First chunk, NOT final.
+    const res1 = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({
+        slug: 'societist',
+        snapshot_id: SNAPSHOT_ID,
+        notion_page_ids: [PAGE_ID_A],
+        is_final_chunk: false,
+      }),
+    });
+    assert.equal(res1.statusCode, 200);
+    assert.equal(JSON.parse(res1.body).snapshotFlipped, false);
+    assert.equal(recorded.snapshotPatches.length, 0, 'no flip after first chunk');
+
+    // Final chunk.
+    const res2 = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({
+        slug: 'societist',
+        snapshot_id: SNAPSHOT_ID,
+        notion_page_ids: [PAGE_ID_B],
+        is_final_chunk: true,
+      }),
+    });
+    assert.equal(res2.statusCode, 200);
+    assert.equal(JSON.parse(res2.body).snapshotFlipped, true);
+    assert.equal(recorded.snapshotPatches.length, 1, 'flip fires after final chunk');
+    assert.equal(recorded.snapshotPatches[0].kind, 'pushed');
+  } finally { restore(); }
+});
+
+test('push does NOT flip on partial status', async () => {
+  const recorded = {};
+  const snap = snapshotRow({
+    payload: [
+      taskRow(PAGE_ID_A, 'clean', '2026-04-14', '2026-04-14'),
+      taskRow(PAGE_ID_B, 'clean', '2026-04-14', '2026-04-14'),
+    ],
+  });
+  // Make the second Notion PATCH fail so overallStatus becomes 'partial'.
+  let notionPatchCount = 0;
+  const routes = baseRoutes({ snapshotRows: [snap], recorder: recorded });
+  // Replace the Notion route with a stateful one that fails the 2nd patch.
+  const notionIdx = routes.findIndex(([m]) => m instanceof RegExp && m.source.includes('api\\.notion\\.com'));
+  assert.ok(notionIdx >= 0, 'found notion route in baseRoutes');
+  routes[notionIdx] = [/https:\/\/api\.notion\.com\/v1\/pages\/.*$/, (url, opts) => {
+    recorded.notionCalls.push({ url, method: opts && opts.method });
+    if (opts && opts.method === 'PATCH') {
+      notionPatchCount++;
+      if (notionPatchCount === 2) {
+        return { status: 500, body: { message: 'boom' } };
+      }
+      return { status: 200, body: { object: 'page' } };
+    }
+    return {
+      status: 200,
+      body: {
+        properties: {
+          'Start Date': { type: 'date', date: { start: '2026-04-14' } },
+          'End Date':   { type: 'date', date: { start: '2026-04-14' } },
+        },
+      },
+    };
+  }];
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'partial');
+    assert.equal(body.snapshotFlipped, false, 'no flip on partial');
+    assert.equal(recorded.snapshotPatches.length, 0);
+  } finally { restore(); }
+});
+
+test('push returns snapshotFlipFailed=true when UPDATE fails', async () => {
+  const recorded = {};
+  const routes = baseRoutes({
+    snapshotRows: [snapshotRow()],
+    snapshotPatchStatus: 500,
+    recorder: recorded,
+  });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 200, 'still 200 even when flip fails');
+    const body = JSON.parse(res.body);
+    assert.equal(body.snapshotFlipped, false);
+    assert.equal(body.snapshotFlipFailed, true);
+    assert.equal(recorded.snapshotPatches.length, 1, 'flip was attempted');
+  } finally { restore(); }
+});
+
+test('push response echoes snapshotId', async () => {
+  const routes = baseRoutes({ snapshotRows: [snapshotRow()] });
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { Authorization: 'Bearer jwt-abc' },
+      body: JSON.stringify({ slug: 'societist', snapshot_id: SNAPSHOT_ID }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.snapshotId, SNAPSHOT_ID);
   } finally { restore(); }
 });
