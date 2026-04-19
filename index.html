@@ -36,35 +36,141 @@
 
   <!-- Integration styles (main session owns these; module CSS lives in gantt-custom.css) -->
   <style>
-    #sim-controls {
+    /* Action cluster (undo, reset, sync menu, user menu) — right side of top bar */
+    #action-cluster {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       margin-left: auto;
       padding-left: 16px;
     }
-    #sim-controls button {
-      background: #1e293b;
-      color: #e2e8f0;
-      border: 1px solid #334155;
-      padding: 6px 12px;
-      font-size: 12px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    #sim-controls button:hover {
-      background: #334155;
-      border-color: #475569;
-    }
-    #reset-sim-btn { color: #fca5a5; }
-    #undo-sim-btn { color: #fde68a; }
-    #export-changes-btn { color: #86efac; }
     #sim-status {
       font-size: 11px;
       font-weight: 500;
-      margin-left: 4px;
-      min-width: 110px;
+      color: #94a3b8;
+      margin-right: 4px;
+      min-width: 0;
+    }
+    #sim-status:empty { display: none; }
+
+    /* Single-color icon buttons (undo, reset, sync, user) */
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid #334155;
+      border-radius: 4px;
+      color: #94a3b8;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+    .icon-btn:hover:not(:disabled) {
+      background: #334155;
+      color: #f1f5f9;
+      border-color: #475569;
+    }
+    .icon-btn[aria-expanded="true"] {
+      background: #3b82f6;
+      border-color: #3b82f6;
+      color: #ffffff;
+    }
+    .icon-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    /* Dropdown menu panels */
+    .menu-wrap {
+      position: relative;
+      display: inline-block;
+    }
+    .menu-panel {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 200px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      padding: 4px;
+      z-index: 200;
+    }
+    .menu-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 7px 12px;
+      background: transparent;
+      color: #e2e8f0;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .menu-item:hover:not(:disabled) {
+      background: #334155;
+    }
+    .menu-item:disabled {
+      color: #64748b;
+      cursor: not-allowed;
+    }
+    .menu-label {
+      padding: 6px 12px 4px;
+      font-size: 11px;
+      color: #64748b;
+      letter-spacing: 0.02em;
+      word-break: break-all;
+    }
+    .menu-divider {
+      height: 1px;
+      background: #334155;
+      margin: 4px 2px;
+    }
+
+    /* Substrip: roadmap name + stream legend, sits between top bar and chart */
+    #ppgantt-substrip {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 4px 16px;
+      background: #111827;
+      border-bottom: 1px solid #1f2937;
+      flex-shrink: 0;
+      font-size: 11px;
+    }
+    #ppgantt-substrip .subtitle {
+      color: #64748b;
+      font-size: 11px;
+      margin: 0;
+    }
+    #ppgantt-substrip #stream-legend {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      color: #94a3b8;
+      margin-left: auto;
+    }
+    .legend-label {
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .legend-swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
     }
     #ppgantt-header {
       display: flex;
@@ -238,25 +344,70 @@
       <span id="focus-summary"></span>
     </div>
 
-    <div id="stream-legend" style="display:flex;gap:12px;align-items:center;font-size:11px;color:#94a3b8;margin-left:12px;">
-      <span style="font-weight:600;letter-spacing:.04em;">STREAMS</span>
-      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#3B82F6;"></span>Peter</span>
-      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#A855F7;"></span>Lourenço</span>
-      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#9CA3AF;"></span>Shared</span>
-      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#EAB308;"></span>App Store</span>
-      <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#EC4899;"></span>White-Label</span>
-    </div>
-
-    <span class="subtitle" id="data-source-label"></span>
-
-    <!-- Simulation controls (Wave 1 integration) -->
-    <div id="sim-controls">
-      <button id="undo-sim-btn" type="button" title="Undo the most recent simulation change" disabled>Undo</button>
-      <button id="reset-sim-btn" type="button" title="Clear any active simulation and re-render original data">Reset simulation</button>
-      <button id="export-changes-btn" type="button" title="Copy a Notion-MCP-ready markdown prompt to the clipboard">Export changes</button>
-      <button id="pull-from-notion-btn" type="button" title="Available in team workspace (log in to a gated route)" disabled>Pull from Notion</button>
-      <button id="push-to-notion-btn" type="button" title="Available in team workspace (log in to a gated route)" disabled>Push to Notion</button>
+    <!-- Right-side action cluster: undo, reset, sync menu, user menu -->
+    <div id="action-cluster">
       <span id="sim-status"></span>
+
+      <button id="undo-sim-btn" class="icon-btn" type="button" title="Undo the most recent simulation change" aria-label="Undo" disabled>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 8 L7 4"/>
+          <path d="M3 8 L7 12"/>
+          <path d="M3 8 H10 A3 3 0 0 1 13 11 V12"/>
+        </svg>
+      </button>
+
+      <button id="reset-sim-btn" class="icon-btn" type="button" title="Clear any active simulation and re-render original data" aria-label="Reset simulation">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4 L12 12"/>
+          <path d="M12 4 L4 12"/>
+        </svg>
+      </button>
+
+      <!-- Sync menu (Notion pull / push / export) -->
+      <div class="menu-wrap" id="sync-menu-wrap">
+        <button id="sync-menu-btn" class="icon-btn" type="button" title="Notion sync" aria-label="Sync menu" aria-haspopup="true" aria-expanded="false">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.5 7 A6 6 0 0 0 3 5.5"/>
+            <path d="M14 3 v4 h-4"/>
+            <path d="M2.5 9 A6 6 0 0 0 13 10.5"/>
+            <path d="M2 13 v-4 h4"/>
+          </svg>
+        </button>
+        <div class="menu-panel" id="sync-menu-panel" role="menu" hidden>
+          <button id="pull-from-notion-btn" class="menu-item" type="button" role="menuitem" title="Available in team workspace (log in to a gated route)" disabled>Pull from Notion</button>
+          <button id="push-to-notion-btn" class="menu-item" type="button" role="menuitem" title="Available in team workspace (log in to a gated route)" disabled>Push to Notion</button>
+          <div class="menu-divider"></div>
+          <button id="export-changes-btn" class="menu-item" type="button" role="menuitem" title="Copy a Notion-MCP-ready markdown prompt to the clipboard">Export changes</button>
+        </div>
+      </div>
+
+      <!-- User menu -->
+      <div class="menu-wrap" id="user-menu-wrap">
+        <button id="user-menu-btn" class="icon-btn" type="button" title="Account" aria-label="User menu" aria-haspopup="true" aria-expanded="false">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="6" r="2.5"/>
+            <path d="M3 13 C3 10.5 5.2 9 8 9 C10.8 9 13 10.5 13 13"/>
+          </svg>
+        </button>
+        <div class="menu-panel" id="user-menu-panel" role="menu" hidden>
+          <div class="menu-label" id="user-menu-email">Not signed in</div>
+          <div class="menu-divider"></div>
+          <button id="user-menu-signout" class="menu-item" type="button" role="menuitem" disabled>Sign out</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Secondary strip: roadmap name + stream legend ──────────────────── -->
+  <div id="ppgantt-substrip">
+    <span class="subtitle" id="data-source-label"></span>
+    <div id="stream-legend">
+      <span class="legend-label">STREAMS</span>
+      <span class="legend-item"><span class="legend-swatch" style="background:#3B82F6;"></span>Peter</span>
+      <span class="legend-item"><span class="legend-swatch" style="background:#A855F7;"></span>Lourenço</span>
+      <span class="legend-item"><span class="legend-swatch" style="background:#9CA3AF;"></span>Shared</span>
+      <span class="legend-item"><span class="legend-swatch" style="background:#EAB308;"></span>App Store</span>
+      <span class="legend-item"><span class="legend-swatch" style="background:#EC4899;"></span>White-Label</span>
     </div>
   </div>
 
@@ -2068,6 +2219,70 @@
             _exitRelatedFocus();
           }
         });
+
+        // ─── Top-bar dropdown menus (sync, user) ──────────────────────────
+        var _openMenu = null;
+        function _closeMenu() {
+          if (!_openMenu) return;
+          _openMenu.panel.hidden = true;
+          _openMenu.btn.setAttribute('aria-expanded', 'false');
+          _openMenu = null;
+        }
+        function _toggleMenu(btn, panel) {
+          if (_openMenu && _openMenu.btn === btn) { _closeMenu(); return; }
+          _closeMenu();
+          panel.hidden = false;
+          btn.setAttribute('aria-expanded', 'true');
+          _openMenu = { btn: btn, panel: panel };
+        }
+        function _bindMenu(btnId, panelId) {
+          var btn = document.getElementById(btnId);
+          var panel = document.getElementById(panelId);
+          if (!btn || !panel) return;
+          btn.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            _toggleMenu(btn, panel);
+          });
+          panel.addEventListener('click', function (ev) {
+            // Close menu after any menu-item click, but let the click event
+            // itself reach the item's own handler (no stopPropagation here).
+            if (ev.target && ev.target.closest('.menu-item')) {
+              setTimeout(_closeMenu, 0);
+            } else {
+              ev.stopPropagation();
+            }
+          });
+        }
+        _bindMenu('sync-menu-btn', 'sync-menu-panel');
+        _bindMenu('user-menu-btn', 'user-menu-panel');
+        document.addEventListener('click', _closeMenu);
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && _openMenu) _closeMenu();
+        });
+
+        // ─── User menu: populate email + wire sign-out ───────────────────
+        var userEmailEl = document.getElementById('user-menu-email');
+        var signOutBtn = document.getElementById('user-menu-signout');
+        function _hydrateUserMenu() {
+          var sb = window.__PPGANTT_SUPABASE__;
+          if (!sb || !sb.auth || typeof sb.auth.getUser !== 'function') return;
+          sb.auth.getUser().then(function (res) {
+            var user = res && res.data && res.data.user;
+            if (user && user.email) {
+              if (userEmailEl) userEmailEl.textContent = user.email;
+              if (signOutBtn) signOutBtn.disabled = false;
+            }
+          }).catch(function () { /* ignore */ });
+        }
+        _hydrateUserMenu();
+        document.addEventListener('ppgantt:slug-ready', _hydrateUserMenu);
+        if (signOutBtn) {
+          signOutBtn.addEventListener('click', function () {
+            if (typeof window.__PPGANTT_LOGOUT__ === 'function') {
+              window.__PPGANTT_LOGOUT__();
+            }
+          });
+        }
 
         // ─── Refresh-manifest button inside the sidebar ──────────────────
         // POSTs to /api/refresh-manifest (Express route). On success the

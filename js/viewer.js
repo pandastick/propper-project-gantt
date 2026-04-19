@@ -909,6 +909,12 @@
           // Re-apply slack tails + stream stripes when view mode changes (pixel scale changes)
           _applySlackTails();
           _applyStreamStripes();
+          // Frappe's change_view_mode re-renders the SVG, creating fresh
+          // .grid-header + .date nodes OUTSIDE the sticky group. Re-promote
+          // them and re-bind the scroll listener so vertical scroll keeps
+          // pinning the timeline header to the viewport top.
+          _promoteStickyLayers();
+          _bindStickyTimelineHeader();
           _applyStickyTimelinePosition();
           // Update active zoom button in the UI
           _syncZoomButtons(mode);
