@@ -35,9 +35,14 @@ Thumbs.db
 # These paths live inside the repo for convenience but must never be committed.
 data/roadmap.json
 data/roadmap.js
+data/roadmap-*.json
+data/roadmap-*.js
 data/_schema_cache/
 data/_archived_fixtures/
 logs/sync-history.jsonl
+
+# Supabase CLI local link/session state
+supabase/.temp/
 
 # Local Netlify folder
 .netlify
