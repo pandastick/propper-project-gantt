@@ -3043,39 +3043,62 @@
           if (snap.id === _selectedSnapshotId) card.classList.add('is-selected');
 
           var kindLabel = kind.toUpperCase();
-          var label = snap.label || ('Untitled ' + kindLabel.toLowerCase());
-          // The backend stamps IMPORT labels as "Notion pull YY-MM-DD HH:MM"
-          // in UTC (no timezone context on the server). Re-format client-side
-          // into the user's local timezone so the label matches the wall clock.
-          if (kind === 'import' && typeof label === 'string' &&
-              label.indexOf('Notion pull') === 0 && snap.created_at) {
-            var localStr = _localTimestamp(snap.created_at);
-            if (localStr) label = 'Notion pull ' + localStr;
+          // Split the card title into a TYPE (primary, bold) and a
+          // TIMESTAMP (secondary, muted). For IMPORT cards derive the
+          // timestamp from created_at in the user's local timezone so
+          // it matches the wall clock. For user-named snapshots use the
+          // stored label verbatim as the title, no timestamp subline.
+          var titleText;
+          var timestampText = null;
+          if (kind === 'import') {
+            titleText = 'Notion pull';
+            timestampText = _localTimestamp(snap.created_at) || '';
+          } else if (kind === 'pushed') {
+            titleText = 'Pushed to Notion';
+            timestampText = snap.pushed_at ? (_localTimestamp(snap.pushed_at) || '') : '';
+          } else if (snap.label && snap.label.indexOf('Snapshot ') === 0) {
+            // Auto-generated backend label "Snapshot YY-MM-DD HH:MM" — re-format.
+            titleText = 'Snapshot';
+            timestampText = _localTimestamp(snap.created_at) || '';
+          } else {
+            // User-chosen label; show as-is.
+            titleText = snap.label || 'Untitled snapshot';
           }
+
           var created = _relTimestamp(snap.created_at);
           var metaHtml = _escHtml(created);
           if (kind === 'pushed' && snap.pushed_at) {
             metaHtml += '<span class="pushed-tag">pushed ' + _escHtml(_relTimestamp(snap.pushed_at)) + '</span>';
           }
 
-          // Owner initials badge. Backend returns `created_by_initials`
-          // (from public.profiles.initials). Falls back to "?" when
-          // unknown so every card has a badge in the same spot.
+          // Owner badge. Backend returns `created_by_initials` + `created_by_color`.
+          // Falls back to slate "?" when unknown so every card has a badge slot.
           var initials = snap.created_by_initials || '?';
+          var badgeColor = snap.created_by_color || null;
+          var badgeStyle = badgeColor
+            ? ' style="background:' + _escHtml(badgeColor) + ';color:#ffffff;"'
+            : '';
           var initialsHtml =
-            '<span class="snapshot-owner-badge" title="Created by">' +
+            '<span class="snapshot-owner-badge"' + badgeStyle + ' title="Created by">' +
               _escHtml(initials) +
             '</span>';
+
+          var titleHtml =
+            '<div class="snapshot-card-title">' + _escHtml(titleText) + '</div>';
+          var timestampHtml = timestampText
+            ? '<div class="snapshot-card-timestamp">' + _escHtml(timestampText) + '</div>'
+            : '';
 
           card.innerHTML =
             '<div class="snapshot-card-row">' +
               '<span class="snapshot-kind-pill ' + kindClass + '">' + _escHtml(kindLabel) + '</span>' +
               initialsHtml +
-              '<span class="snapshot-card-label">' + _escHtml(label) + '</span>' +
               '<button class="snapshot-delete" type="button" aria-label="Delete snapshot" title="Delete snapshot">' +
                 '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4 L12 12"/><path d="M12 4 L4 12"/></svg>' +
               '</button>' +
             '</div>' +
+            titleHtml +
+            timestampHtml +
             '<div class="snapshot-card-meta">' + metaHtml + '</div>';
 
           // Delete button — stopPropagation so the card-click handler
