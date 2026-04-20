@@ -151,7 +151,7 @@ test('handler returns 200 with snapshots sorted by created_at DESC', async () =>
     })],
     [/\/rest\/v1\/snapshots\?/, () => ({ status: 200, body: rows })],
     [/\/rest\/v1\/profiles\?/, () => ({
-      status: 200, body: [{ id: 'user-1', initials: 'PP' }],
+      status: 200, body: [{ id: 'user-1', initials: 'PP', first_name: 'Peter', last_name: 'Propper', color: '#3B82F6' }],
     })],
   ];
   const { restore, calls } = installFetchStub(routes);
@@ -164,8 +164,9 @@ test('handler returns 200 with snapshots sorted by created_at DESC', async () =>
     assert.equal(body.snapshots[0].id, 'snap-3');
     assert.equal(body.snapshots[1].id, 'snap-2');
     assert.equal(body.snapshots[2].id, 'snap-1');
-    // Initials enriched from profiles lookup.
+    // Initials + color enriched from profiles lookup.
     assert.equal(body.snapshots[0].created_by_initials, 'PP');
+    assert.equal(body.snapshots[0].created_by_color, '#3B82F6');
 
     // Verify the function asked PostgREST for order=created_at.desc.
     const snapshotCall = calls.find((c) => /\/rest\/v1\/snapshots\?/.test(c.url));
@@ -191,6 +192,30 @@ test('snapshots missing an initials row get created_by_initials=null (graceful f
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.snapshots[0].created_by_initials, null);
+    assert.equal(body.snapshots[0].created_by_color, null);
+  } finally { restore(); }
+});
+
+test('initials derived from first_name+last_name when no override is set', async () => {
+  const rows = [
+    { id: 'snap-1', kind: 'snapshot', label: 'test', notes: null, pushed_at: null,
+      created_at: '2026-04-20T10:00:00Z', created_by: 'user-lourenco',
+      source_sync_event_id: null, pushed_sync_event_id: null },
+  ];
+  const routes = [
+    [/\/rest\/v1\/projects\?/, () => ({ status: 200, body: [{ id: 'proj-1' }] })],
+    [/\/rest\/v1\/snapshots\?/, () => ({ status: 200, body: rows })],
+    [/\/rest\/v1\/profiles\?/, () => ({
+      status: 200,
+      body: [{ id: 'user-lourenco', initials: null, first_name: 'Lourenço', last_name: 'Bento', color: '#16A34A' }],
+    })],
+  ];
+  const { restore } = installFetchStub(routes);
+  try {
+    const res = await handler(makeEvent({ slug: 'societist' }));
+    const body = JSON.parse(res.body);
+    assert.equal(body.snapshots[0].created_by_initials, 'LB');
+    assert.equal(body.snapshots[0].created_by_color, '#16A34A');
   } finally { restore(); }
 });
 

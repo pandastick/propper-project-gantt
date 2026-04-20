@@ -168,17 +168,19 @@ exports.handler = async (event) => {
       return { statusCode: 500, body: JSON.stringify({ error: 'Internal error' }) };
     }
 
-    // 3. Batch-fetch profile initials for distinct created_by UUIDs so
-    //    the sidebar can render an owner badge (e.g. "PP"). RLS on
-    //    public.profiles is "select for authenticated" — safe to query
-    //    without exposing anything the user couldn't already see via
-    //    auth.users introspection. Missing rows fall back to null and
-    //    the frontend renders "?" or email-initial.
+    // 3. Batch-fetch profile metadata for distinct created_by UUIDs so
+    //    the sidebar can render a coloured owner badge (e.g. blue "PP").
+    //    Initials are derived server-side in this preference order:
+    //      1. profile.initials (manual override, takes priority)
+    //      2. first_name[0] + last_name[0] (structured fallback)
+    //      3. NULL — frontend renders "?"
+    //    Missing rows fall back to null on both initials + color and the
+    //    frontend renders a slate-grey "?" chip.
     const snapshots = snapRes.body || [];
     const distinctCreatorIds = Array.from(
       new Set(snapshots.map((s) => s.created_by).filter(Boolean)),
     );
-    const initialsByUserId = {};
+    const profileByUserId = {};
     if (distinctCreatorIds.length > 0) {
       try {
         const idList = distinctCreatorIds
@@ -189,21 +191,33 @@ exports.handler = async (event) => {
           accessToken,
           anonKey,
           null,
-          `profiles?select=id,initials&id=in.(${idList})`,
+          `profiles?select=id,initials,first_name,last_name,color&id=in.(${idList})`,
         );
         if (profRes.ok) {
           for (const row of profRes.body || []) {
-            if (row.initials) initialsByUserId[row.id] = row.initials;
+            profileByUserId[row.id] = row;
           }
         }
       } catch (_) {
-        // Silent fall-through — initials are a UX nicety, not a blocker.
+        // Silent fall-through — badges are a UX nicety, not a blocker.
       }
     }
-    const enrichedSnapshots = snapshots.map((s) => ({
-      ...s,
-      created_by_initials: initialsByUserId[s.created_by] || null,
-    }));
+    function deriveInitials(prof) {
+      if (!prof) return null;
+      if (prof.initials) return prof.initials;
+      const f = (prof.first_name || '').trim();
+      const l = (prof.last_name || '').trim();
+      if (f && l) return (f[0] + l[0]).toUpperCase();
+      return null;
+    }
+    const enrichedSnapshots = snapshots.map((s) => {
+      const prof = profileByUserId[s.created_by];
+      return {
+        ...s,
+        created_by_initials: deriveInitials(prof),
+        created_by_color: (prof && prof.color) || null,
+      };
+    });
 
     return {
       statusCode: 200,
