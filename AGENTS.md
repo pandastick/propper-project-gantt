@@ -11,7 +11,7 @@ Architecturally:
 - **Sync**: Python CLI in `sync/` that reads a Notion database, maps its schema, and seeds / refreshes the Supabase `ppgantt.*` tables.
 - **Data**: Supabase Postgres, schema `ppgantt.*`, RLS-gated.
 - **Backend**: Netlify Functions in `netlify/functions/*` forward the user's Supabase JWT to PostgREST so RLS enforces project membership.
-- **Auth**: Supabase Auth magic-link. Gated routes like `/societist` redirect unauthenticated users to `/login`.
+- **Auth**: Supabase Auth email + password (primary) with a magic-link fallback. Gated routes like `/societist` redirect unauthenticated users to `/login`. Admin-created users start with a temp password + `must_change_password=true` metadata flag; the login page forces a password change on first sign-in.
 
 ## Non-Negotiables
 

@@ -201,6 +201,23 @@
     .message.error   { color: var(--error); }
     .message.success { color: var(--success); }
 
+    .magic-fallback {
+      margin: 0;
+      padding: 4px 0 0;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+    }
+    .magic-fallback a {
+      color: #94a3b8;
+      text-decoration: none;
+      border-bottom: 1px dotted #475569;
+    }
+    .magic-fallback a:hover {
+      color: #e2e8f0;
+      border-bottom-color: #64748b;
+    }
+
     .spinner {
       width: 14px;
       height: 14px;
@@ -232,8 +249,9 @@
   <main class="login-wrap" role="main" aria-label="PPGantt sign in">
     <h1 class="brand" aria-label="PPGantt">PPGantt</h1>
     <p class="slug" id="slug-label">Sign in</p>
-    <p class="subtitle">Magic link sign-in</p>
+    <p class="subtitle" id="subtitle">Sign in</p>
 
+    <!-- Primary form: email + password -->
     <form class="auth-form" id="auth-form" novalidate>
       <div>
         <label class="field-label" for="email">Email</label>
@@ -249,11 +267,67 @@
           aria-label="Email address"
         />
       </div>
+      <div>
+        <label class="field-label" for="password">Password</label>
+        <input
+          class="email"
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+          placeholder="••••••••"
+          aria-label="Password"
+        />
+      </div>
       <button class="submit" id="submit-btn" type="submit">
-        <span id="submit-label">Send magic link</span>
+        <span id="submit-label">Sign in</span>
         <span class="spinner" id="spinner" aria-hidden="true"></span>
       </button>
       <p class="message" id="message" role="status" aria-live="polite"></p>
+      <p class="magic-fallback">
+        <a href="#" id="magic-link-toggle">Email me a magic link instead</a>
+      </p>
+    </form>
+
+    <!-- Change-password form: shown after login when must_change_password=true -->
+    <form class="auth-form" id="change-password-form" style="display:none;" novalidate>
+      <p class="subtitle" style="margin-bottom: 18px; color: #f59e0b;">
+        You're using a temporary password. Set a new one to continue.
+      </p>
+      <div>
+        <label class="field-label" for="new-password">New password</label>
+        <input
+          class="email"
+          id="new-password"
+          name="new-password"
+          type="password"
+          autocomplete="new-password"
+          required
+          minlength="10"
+          placeholder="At least 10 characters"
+          aria-label="New password"
+        />
+      </div>
+      <div>
+        <label class="field-label" for="new-password-confirm">Confirm new password</label>
+        <input
+          class="email"
+          id="new-password-confirm"
+          name="new-password-confirm"
+          type="password"
+          autocomplete="new-password"
+          required
+          minlength="10"
+          placeholder="Re-enter new password"
+          aria-label="Confirm new password"
+        />
+      </div>
+      <button class="submit" id="change-password-btn" type="submit">
+        <span id="change-password-label">Set new password</span>
+        <span class="spinner" id="change-password-spinner" aria-hidden="true"></span>
+      </button>
+      <p class="message" id="change-password-message" role="status" aria-live="polite"></p>
     </form>
   </main>
 
@@ -271,11 +345,24 @@
 
     const form = document.getElementById('auth-form');
     const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
     const submitBtn = document.getElementById('submit-btn');
     const submitLabel = document.getElementById('submit-label');
     const spinner = document.getElementById('spinner');
     const messageEl = document.getElementById('message');
     const slugLabelEl = document.getElementById('slug-label');
+    const magicLinkToggle = document.getElementById('magic-link-toggle');
+
+    const changePasswordForm = document.getElementById('change-password-form');
+    const newPasswordInput = document.getElementById('new-password');
+    const newPasswordConfirmInput = document.getElementById('new-password-confirm');
+    const changePasswordBtn = document.getElementById('change-password-btn');
+    const changePasswordLabel = document.getElementById('change-password-label');
+    const changePasswordSpinner = document.getElementById('change-password-spinner');
+    const changePasswordMessage = document.getElementById('change-password-message');
+
+    // When true, the next submit sends a magic-link OTP instead of a password.
+    let magicLinkMode = false;
 
     // Set subtitle from ?redirect= param: "Sign in to societist" or just "Sign in"
     (function setSlugLabel() {
@@ -311,11 +398,12 @@
     function setLoading(on) {
       submitBtn.disabled = on;
       emailInput.disabled = on;
+      passwordInput.disabled = on;
       if (on) {
-        submitLabel.textContent = 'Sending...';
+        submitLabel.textContent = magicLinkMode ? 'Sending...' : 'Signing in...';
         spinner.classList.add('visible');
       } else {
-        submitLabel.textContent = 'Send magic link';
+        submitLabel.textContent = magicLinkMode ? 'Send magic link' : 'Sign in';
         spinner.classList.remove('visible');
       }
     }
@@ -333,47 +421,129 @@
       messageEl.classList.remove('visible');
     }
 
+    // Toggle between password and magic-link modes. Hides the password
+    // field in magic-link mode so the form stays minimal.
+    magicLinkToggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      magicLinkMode = !magicLinkMode;
+      passwordInput.closest('div').style.display = magicLinkMode ? 'none' : '';
+      passwordInput.required = !magicLinkMode;
+      submitLabel.textContent = magicLinkMode ? 'Send magic link' : 'Sign in';
+      magicLinkToggle.textContent = magicLinkMode
+        ? 'Use a password instead'
+        : 'Email me a magic link instead';
+      hideMessage();
+    });
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       hideMessage();
 
       const email = (emailInput.value || '').trim();
-      // Rely on the browser's native email validity — if it's empty or
-      // malformed, reportValidity() will show the native bubble.
+      const password = passwordInput.value || '';
+
       if (!emailInput.checkValidity()) {
         emailInput.reportValidity();
         return;
       }
 
       const redirect = safeRedirectTarget();
-      const emailRedirectTo =
-        window.location.origin + '/auth-callback.html?next=' + encodeURIComponent(redirect);
 
+      if (magicLinkMode) {
+        const emailRedirectTo =
+          window.location.origin + '/auth-callback.html?next=' + encodeURIComponent(redirect);
+        setLoading(true);
+        try {
+          const { error } = await supabase.auth.signInWithOtp({
+            email,
+            options: { emailRedirectTo, shouldCreateUser: false },
+          });
+          if (error && !/not.*found|sign.*up|invalid.*login/i.test(error.message || '')) {
+            showMessage('Could not send. Try again.', 'error');
+          } else {
+            showMessage('Check your email for a link to sign in.', 'success');
+          }
+        } catch (_) {
+          showMessage('Could not send. Try again.', 'error');
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      // Password sign-in path
+      if (!password) {
+        passwordInput.reportValidity();
+        return;
+      }
       setLoading(true);
       try {
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: {
-            emailRedirectTo,
-            shouldCreateUser: false,
-          },
-        });
-
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) {
-          // Don't leak whether the address exists in the users table.
-          // Treat a "user not found" style error the same as success.
-          if (/not.*found|sign.*up|invalid.*login/i.test(error.message || '')) {
-            showMessage('Check your email for a link to sign in.', 'success');
-          } else {
-            showMessage('Could not send. Try again.', 'error');
-          }
+          showMessage('Incorrect email or password.', 'error');
+          setLoading(false);
+          return;
+        }
+        // Post-sign-in: if the user's metadata has must_change_password,
+        // show the change-password form before redirecting. Otherwise
+        // redirect straight to the intended destination.
+        const mustChange =
+          data && data.user && data.user.user_metadata &&
+          data.user.user_metadata.must_change_password === true;
+        if (mustChange) {
+          form.style.display = 'none';
+          changePasswordForm.style.display = '';
+          document.getElementById('subtitle').textContent = 'Set a new password';
+          newPasswordInput.focus();
         } else {
-          showMessage('Check your email for a link to sign in.', 'success');
+          window.location.replace(redirect);
         }
       } catch (_) {
-        showMessage('Could not send. Try again.', 'error');
-      } finally {
+        showMessage('Sign-in failed. Try again.', 'error');
         setLoading(false);
+      }
+    });
+
+    // Change-password submission
+    changePasswordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      changePasswordMessage.classList.remove('visible', 'error', 'success');
+      const pw1 = newPasswordInput.value;
+      const pw2 = newPasswordConfirmInput.value;
+      if (pw1.length < 10) {
+        changePasswordMessage.textContent = 'Password must be at least 10 characters.';
+        changePasswordMessage.classList.add('visible', 'error');
+        return;
+      }
+      if (pw1 !== pw2) {
+        changePasswordMessage.textContent = 'Passwords do not match.';
+        changePasswordMessage.classList.add('visible', 'error');
+        return;
+      }
+      changePasswordBtn.disabled = true;
+      changePasswordLabel.textContent = 'Saving...';
+      changePasswordSpinner.classList.add('visible');
+      try {
+        const { error } = await supabase.auth.updateUser({
+          password: pw1,
+          data: { must_change_password: false },
+        });
+        if (error) {
+          changePasswordMessage.textContent = 'Could not save. Try again.';
+          changePasswordMessage.classList.add('visible', 'error');
+          changePasswordBtn.disabled = false;
+          changePasswordLabel.textContent = 'Set new password';
+          changePasswordSpinner.classList.remove('visible');
+          return;
+        }
+        // Redirect into the app.
+        window.location.replace(safeRedirectTarget());
+      } catch (_) {
+        changePasswordMessage.textContent = 'Could not save. Try again.';
+        changePasswordMessage.classList.add('visible', 'error');
+        changePasswordBtn.disabled = false;
+        changePasswordLabel.textContent = 'Set new password';
+        changePasswordSpinner.classList.remove('visible');
       }
     });
 

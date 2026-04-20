@@ -2,10 +2,44 @@
 
 > Current state: there's no UI for managing team members. Membership lives in `public.project_members` and is added via SQL. A proper invitation UI ("Feature A") is documented in `AGENTS.md` as planned work.
 
-## Prerequisites
+## Two paths
 
-1. The new user must **sign in at least once** via the Supabase magic-link flow (`/login` on the deployed site). This is what creates their `auth.users` row. Without this, the SQL below finds no matching user and the INSERT does nothing.
-2. You (the inviter) must have **owner** role on the target project. Without it, RLS rejects the INSERT.
+1. **Admin-created account (recommended)** — you create the user with a temp password via Supabase admin API. Share the temp password with them securely. On first login they're forced to change it. No email required, no rate-limit risk.
+2. **Self-serve magic-link** — they visit `/login`, click "Email me a magic link", click the link, land signed in. Limited to 2 emails/hour unless you configure custom SMTP.
+
+Path 1 is reliable and fast. Path 2 depends on the Supabase default mailer's rate limit.
+
+## Path 1 — Admin-created account
+
+Create the account via the Supabase admin API. Needs the `service_role` key from **Supabase Dashboard → Settings → API**.
+
+```bash
+SERVICE_ROLE="<paste-service-role-key>"
+NEW_EMAIL="new.member@example.com"
+TEMP_PASSWORD=$(python3 -c "import secrets, string; print(''.join(secrets.choice(string.ascii_letters + string.digits + '@#\$%&*!?') for _ in range(16)))")
+echo "Temp password: $TEMP_PASSWORD"
+
+curl -s -X POST "https://wzzjozdljxhmrmscevlh.supabase.co/auth/v1/admin/users" \
+  -H "apikey: $SERVICE_ROLE" \
+  -H "Authorization: Bearer $SERVICE_ROLE" \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"$NEW_EMAIL\",\"password\":\"$TEMP_PASSWORD\",\"email_confirm\":true,\"user_metadata\":{\"must_change_password\":true}}"
+```
+
+Share the temp password with them over a secure channel (1Password shared item, Signal, WhatsApp, etc. — not plain email).
+
+On their first sign-in at `/login`, they enter email + temp password, then the app shows a "set a new password" form before granting access.
+
+Then continue with Step 2 + Step 3 + Step 4 below to grant project membership and set their profile.
+
+## Path 2 — Self-serve magic link
+
+They visit `https://ppgantt.netlify.app/login`, click "Email me a magic link instead", enter email, click the link in the email. This creates their `auth.users` row. Then you run Step 2 onward.
+
+## Prerequisites (both paths)
+
+1. The new user must have an `auth.users` row before you can grant project membership. Path 1 creates it directly; Path 2 requires them to complete a magic-link sign-in first.
+2. You (the inviter) must have **owner** role on the target project. Without it, RLS rejects the INSERT in Step 2.
 
 ## Roles
 
@@ -17,7 +51,7 @@
 
 Most collaborators you invite will be `editor`.
 
-## Step 1 — Verify the new user has signed in
+## Step 1 — Verify the new user exists
 
 In the Supabase Dashboard → SQL Editor:
 
@@ -27,7 +61,7 @@ FROM auth.users
 WHERE email = 'new.member@example.com';
 ```
 
-Expected: one row. If zero rows → they haven't signed in yet. Send them the deploy URL (e.g. `https://ppgantt.netlify.app/login`) and ask them to complete the magic-link flow once before you run the INSERT.
+Expected: one row. If zero rows → use Path 1 above to create the account, OR have them complete Path 2's magic-link sign-in once before you continue.
 
 ## Step 2 — Add them to the project
 
