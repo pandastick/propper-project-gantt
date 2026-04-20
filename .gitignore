@@ -19,7 +19,7 @@ deno.lock
 
 # Agent memory & private docs
 _docs/
-CLAUDE.md
+PRIVATE_INFRA.md
 plan.md
 
 # OS
